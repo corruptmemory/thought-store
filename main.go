@@ -104,6 +104,7 @@ func (cmd *ServeCmd) Execute(args []string) error {
 			return fmt.Errorf("start mdns: %w", err)
 		}
 		defer mdnsServer.Shutdown()
+		brain.SetMDNS(cfg.MDNS.Name, cfg.MDNS.ServiceType())
 		fmt.Printf("Advertising as %q via mDNS (%s)\n", cfg.MDNS.Name, cfg.MDNS.ServiceType())
 	}
 
@@ -171,28 +172,25 @@ func (cmd *MCPCmd) Execute(args []string) error {
 	var brain ThoughtStore
 
 	if cmd.Remote {
-		var urls []string
+		var discovered []string
 
 		// mDNS discovery
 		if cfg.MDNS.Name != "" {
 			fmt.Fprintf(os.Stderr, "Discovering %q via mDNS...\n", cfg.MDNS.Name)
-			discovered, err := DiscoverByName(cfg.MDNS.Name, cfg.MDNS.ServiceType(), 2*time.Second)
+			found, err := DiscoverByName(cfg.MDNS.Name, cfg.MDNS.ServiceType(), 2*time.Second)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "mDNS discovery failed: %v\n", err)
-			} else if len(discovered) > 0 {
-				fmt.Fprintf(os.Stderr, "Discovered: %v\n", discovered)
-				urls = append(urls, discovered...)
+			} else if len(found) > 0 {
+				fmt.Fprintf(os.Stderr, "Discovered: %v\n", found)
+				discovered = found
 			}
 		}
 
-		// Configured URLs as fallback
-		urls = append(urls, cfg.MCP.URLs...)
-
-		if len(urls) == 0 {
+		if len(discovered) == 0 && len(cfg.MCP.URLs) == 0 {
 			return fmt.Errorf("no URLs: configure mcp.urls or mdns.name in %s", cmd.Config)
 		}
 
-		brain = NewRemoteBrain(urls, 30*time.Second)
+		brain = NewRemoteBrain(cfg.MCP.URLs, discovered, 30*time.Second)
 	} else {
 		ctx := context.Background()
 

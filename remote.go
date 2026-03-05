@@ -17,17 +17,27 @@ var _ ThoughtStore = (*RemoteBrain)(nil)
 // RemoteBrain implements ThoughtStore by talking to a thought-store HTTP server.
 // It tries URLs in order, using the first one that responds.
 type RemoteBrain struct {
-	urls      []string
-	client    *http.Client
-	startedAt time.Time
+	configuredURLs []string
+	discoveredURLs []string
+	client         *http.Client
+	startedAt      time.Time
 }
 
-func NewRemoteBrain(urls []string, timeout time.Duration) *RemoteBrain {
+func NewRemoteBrain(configuredURLs, discoveredURLs []string, timeout time.Duration) *RemoteBrain {
 	return &RemoteBrain{
-		urls:      urls,
-		client:    &http.Client{Timeout: timeout},
-		startedAt: time.Now(),
+		configuredURLs: configuredURLs,
+		discoveredURLs: discoveredURLs,
+		client:         &http.Client{Timeout: timeout},
+		startedAt:      time.Now(),
 	}
+}
+
+// allURLs returns discovered URLs first, then configured URLs.
+func (b *RemoteBrain) allURLs() []string {
+	urls := make([]string, 0, len(b.discoveredURLs)+len(b.configuredURLs))
+	urls = append(urls, b.discoveredURLs...)
+	urls = append(urls, b.configuredURLs...)
+	return urls
 }
 
 func (b *RemoteBrain) Capture(ctx context.Context, content string, source string) (*Thought, error) {
@@ -106,7 +116,8 @@ func (b *RemoteBrain) Diagnostics(ctx context.Context) (*DiagnosticsReport, erro
 	}
 
 	remoteDiag := &RemoteDiag{
-		URLs: b.urls,
+		URLs:           b.configuredURLs,
+		DiscoveredURLs: b.discoveredURLs,
 	}
 
 	// Probe: find which URL responds and measure latency
@@ -127,7 +138,7 @@ func (b *RemoteBrain) Diagnostics(ctx context.Context) (*DiagnosticsReport, erro
 	remoteDiag.Latency = latency.Truncate(time.Millisecond).String()
 
 	// Determine which URL responded by probing each individually
-	for _, u := range b.urls {
+	for _, u := range b.allURLs() {
 		probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		req, reqErr := http.NewRequestWithContext(probeCtx, "GET", u+"/api/stats", nil)
 		if reqErr != nil {
@@ -159,7 +170,7 @@ func (b *RemoteBrain) Diagnostics(ctx context.Context) (*DiagnosticsReport, erro
 // doRequest tries each URL in the fallback chain until one responds.
 func (b *RemoteBrain) doRequest(ctx context.Context, method, path string, body io.Reader, headers http.Header) (*http.Response, error) {
 	var lastErr error
-	for _, base := range b.urls {
+	for _, base := range b.allURLs() {
 		// Reset body reader for retry if it supports seeking
 		if seeker, ok := body.(io.Seeker); ok {
 			seeker.Seek(0, io.SeekStart)

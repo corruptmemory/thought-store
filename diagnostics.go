@@ -39,6 +39,7 @@ type DiagnosticsReport struct {
 	Postgres  *PostgresDiag `json:"postgres,omitempty"`
 	Ollama    *OllamaDiag   `json:"ollama,omitempty"`
 	Remote    *RemoteDiag   `json:"remote,omitempty"`
+	MDNS      *MDNSDiag     `json:"mdns,omitempty"`
 }
 
 // PostgresDiag contains diagnostics for the Postgres connection.
@@ -71,10 +72,18 @@ type OllamaDiag struct {
 	Errors        []string `json:"errors,omitempty"`
 }
 
+// MDNSDiag reports mDNS advertising/discovery state.
+type MDNSDiag struct {
+	Advertising bool   `json:"advertising"`
+	Name        string `json:"name,omitempty"`
+	Service     string `json:"service,omitempty"`
+}
+
 // RemoteDiag contains diagnostics for a remote brain connection.
 type RemoteDiag struct {
-	URLs        []string           `json:"urls"`
-	ActiveURL   string             `json:"active_url"`
+	URLs           []string           `json:"urls"`
+	DiscoveredURLs []string           `json:"discovered_urls,omitempty"`
+	ActiveURL      string             `json:"active_url"`
 	NetworkType string             `json:"network_type"`
 	Latency     string             `json:"latency"`
 	ServerDiag  *DiagnosticsReport `json:"server_diagnostics,omitempty"`

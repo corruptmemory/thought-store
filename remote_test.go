@@ -35,7 +35,7 @@ func TestRemoteBrain(t *testing.T) {
 	go http.Serve(ln, srv)
 
 	base := fmt.Sprintf("http://%s", ln.Addr().String())
-	remote := NewRemoteBrain([]string{base}, 5*time.Second)
+	remote := NewRemoteBrain([]string{base}, nil, 5*time.Second)
 
 	// Capture
 	thought, err := remote.Capture(ctx, "remote test: distributed systems are hard", "test")
@@ -105,7 +105,7 @@ func TestRemoteBrainFallback(t *testing.T) {
 	base := fmt.Sprintf("http://%s", ln.Addr().String())
 
 	// First URL is unreachable, second is the real server
-	remote := NewRemoteBrain([]string{"http://127.0.0.1:1", base}, 2*time.Second)
+	remote := NewRemoteBrain([]string{"http://127.0.0.1:1", base}, nil, 2*time.Second)
 
 	stats, err := remote.Stats(ctx)
 	if err != nil {

@@ -20,9 +20,17 @@ var _ ThoughtStore = (*LocalBrain)(nil)
 
 // LocalBrain implements ThoughtStore using direct Postgres and Ollama access.
 type LocalBrain struct {
-	store     *Store
-	ollama    *OllamaClient
-	startedAt time.Time
+	store       *Store
+	ollama      *OllamaClient
+	startedAt   time.Time
+	mdnsName    string
+	mdnsService string
+}
+
+// SetMDNS records that mDNS advertising is active for diagnostics.
+func (b *LocalBrain) SetMDNS(name, service string) {
+	b.mdnsName = name
+	b.mdnsService = service
 }
 
 func NewLocalBrain(store *Store, ollama *OllamaClient) *LocalBrain {
@@ -54,12 +62,20 @@ func (b *LocalBrain) Stats(ctx context.Context) (*StoreStats, error) {
 }
 
 func (b *LocalBrain) Diagnostics(ctx context.Context) (*DiagnosticsReport, error) {
-	return &DiagnosticsReport{
+	report := &DiagnosticsReport{
 		Mode:      BrainModeLocal,
 		StartedAt: b.startedAt,
 		Uptime:    time.Since(b.startedAt).Truncate(time.Second).String(),
 		GoVersion: runtime.Version(),
 		Postgres:  b.store.Diagnostics(ctx),
 		Ollama:    b.ollama.Diagnostics(ctx),
-	}, nil
+	}
+	if b.mdnsName != "" {
+		report.MDNS = &MDNSDiag{
+			Advertising: true,
+			Name:        b.mdnsName,
+			Service:     b.mdnsService,
+		}
+	}
+	return report, nil
 }
