@@ -86,6 +86,20 @@ func (cmd *ServeCmd) Execute(args []string) error {
 	brain := NewLocalBrain(store, ollama)
 	srv := NewServer(brain)
 
+	// mDNS advertising
+	if cfg.MDNS.Name != "" {
+		port, err := ParsePort(cfg.Server.Addr)
+		if err != nil {
+			return fmt.Errorf("parse listen address for mdns: %w", err)
+		}
+		mdnsServer, err := AdvertiseService(cfg.MDNS.Name, cfg.MDNS.ServiceType(), port)
+		if err != nil {
+			return fmt.Errorf("start mdns: %w", err)
+		}
+		defer mdnsServer.Shutdown()
+		fmt.Printf("Advertising as %q via mDNS (%s)\n", cfg.MDNS.Name, cfg.MDNS.ServiceType())
+	}
+
 	fmt.Printf("Starting server on %s\n", cfg.Server.Addr)
 	return http.ListenAndServe(cfg.Server.Addr, srv)
 }
