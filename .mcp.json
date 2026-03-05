@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "thought-store": {
+      "command": "./thought-store",
+      "args": ["mcp", "--config", "thought-store.toml"]
+    }
+  }
+}
