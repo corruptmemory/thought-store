@@ -164,10 +164,28 @@ func (cmd *MCPCmd) Execute(args []string) error {
 	var brain ThoughtStore
 
 	if cmd.Remote {
-		if len(cfg.MCP.URLs) == 0 {
-			return fmt.Errorf("mcp.urls must be configured in %s for --remote mode", cmd.Config)
+		var urls []string
+
+		// mDNS discovery
+		if cfg.MDNS.Name != "" {
+			fmt.Fprintf(os.Stderr, "Discovering %q via mDNS...\n", cfg.MDNS.Name)
+			discovered, err := DiscoverByName(cfg.MDNS.Name, cfg.MDNS.ServiceType(), 2*time.Second)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "mDNS discovery failed: %v\n", err)
+			} else if len(discovered) > 0 {
+				fmt.Fprintf(os.Stderr, "Discovered: %v\n", discovered)
+				urls = append(urls, discovered...)
+			}
 		}
-		brain = NewRemoteBrain(cfg.MCP.URLs, 30*time.Second)
+
+		// Configured URLs as fallback
+		urls = append(urls, cfg.MCP.URLs...)
+
+		if len(urls) == 0 {
+			return fmt.Errorf("no URLs: configure mcp.urls or mdns.name in %s", cmd.Config)
+		}
+
+		brain = NewRemoteBrain(urls, 30*time.Second)
 	} else {
 		ctx := context.Background()
 
