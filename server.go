@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/jim/thought-store/templates"
 )
 
 type Server struct {
@@ -24,6 +25,9 @@ func NewServer(store *Store, ollama *OllamaClient) *Server {
 	s.router.Use(middleware.Logger)
 	s.router.Use(middleware.Recoverer)
 
+	// Pages
+	s.router.Get("/", s.handleHome)
+
 	// API routes
 	s.router.Post("/api/thoughts", s.handleCapture)
 	s.router.Get("/api/thoughts", s.handleList)
@@ -40,22 +44,54 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.router.ServeHTTP(w, r)
 }
 
+func isHTMX(r *http.Request) bool {
+	return r.Header.Get("HX-Request") == "true"
+}
+
+func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
+	thoughts, err := s.store.List(r.Context(), 50, 0)
+	if err != nil {
+		http.Error(w, "list failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	data := make([]templates.ThoughtData, len(thoughts))
+	for i, t := range thoughts {
+		data[i] = templates.ThoughtData{
+			ID:        t.ID,
+			Content:   t.Content,
+			Source:    t.Source,
+			CreatedAt: t.CreatedAt,
+		}
+	}
+
+	templates.Home(data).Render(r.Context(), w)
+}
+
 type captureRequest struct {
 	Content string `json:"content"`
 }
 
 func (s *Server) handleCapture(w http.ResponseWriter, r *http.Request) {
-	var req captureRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
-		return
+	var content string
+
+	if r.Header.Get("Content-Type") == "application/x-www-form-urlencoded" {
+		content = r.FormValue("content")
+	} else {
+		var req captureRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		content = req.Content
 	}
-	if req.Content == "" {
+
+	if content == "" {
 		http.Error(w, "content is required", http.StatusBadRequest)
 		return
 	}
 
-	embedding, err := s.ollama.Embed(r.Context(), req.Content)
+	embedding, err := s.ollama.Embed(r.Context(), content)
 	if err != nil {
 		http.Error(w, "embedding failed: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -66,9 +102,20 @@ func (s *Server) handleCapture(w http.ResponseWriter, r *http.Request) {
 		source = r.Header.Get("X-Source")
 	}
 
-	thought, err := s.store.Insert(r.Context(), req.Content, embedding, source)
+	thought, err := s.store.Insert(r.Context(), content, embedding, source)
 	if err != nil {
 		http.Error(w, "store failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if isHTMX(r) {
+		data := templates.ThoughtData{
+			ID:        thought.ID,
+			Content:   thought.Content,
+			Source:    thought.Source,
+			CreatedAt: thought.CreatedAt,
+		}
+		templates.ThoughtCard(data).Render(r.Context(), w)
 		return
 	}
 
@@ -114,6 +161,22 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	results, err := s.store.Search(r.Context(), embedding, limit)
 	if err != nil {
 		http.Error(w, "search failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if isHTMX(r) {
+		data := make([]templates.ThoughtData, len(results))
+		for i, res := range results {
+			sim := res.Similarity
+			data[i] = templates.ThoughtData{
+				ID:         res.ID,
+				Content:    res.Content,
+				Source:     res.Source,
+				CreatedAt:  res.CreatedAt,
+				Similarity: &sim,
+			}
+		}
+		templates.ThoughtList(data).Render(r.Context(), w)
 		return
 	}
 
