@@ -45,12 +45,19 @@ type ReEmbedCmd struct {
 	BatchSize int    `long:"batch-size" default:"50" description:"Number of thoughts per Ollama batch call"`
 }
 
+type ScanCmd struct {
+	Config  string `long:"config" default:"thought-store.toml" description:"Path to config file"`
+	Service string `long:"service" default:"" description:"Service type to scan for (default: _thought-store._tcp)"`
+	Timeout int    `long:"timeout" default:"3" description:"Discovery timeout in seconds"`
+}
+
 var opts struct {
 	Serve   ServeCmd   `command:"serve" description:"Start the HTTP server"`
 	Capture CaptureCmd `command:"capture" description:"Capture a thought"`
 	Search  SearchCmd  `command:"search" description:"Search thoughts"`
 	MCP     MCPCmd     `command:"mcp" description:"Start MCP server (stdio) for Claude Code"`
 	ReEmbed ReEmbedCmd `command:"re-embed" description:"Re-vectorize all thoughts with current model"`
+	Scan    ScanCmd    `command:"scan" description:"Scan for thought-store instances on the local network"`
 }
 
 func main() {
@@ -282,5 +289,72 @@ func (cmd *ReEmbedCmd) Execute(args []string) error {
 	}
 
 	fmt.Fprintln(os.Stderr, "Done.")
+	return nil
+}
+
+func (cmd *ScanCmd) Execute(args []string) error {
+	cfg, err := LoadConfig(cmd.Config)
+	if err != nil {
+		return err
+	}
+
+	serviceType := cmd.Service
+	if serviceType == "" {
+		serviceType = cfg.MDNS.ServiceType()
+	}
+
+	timeout := time.Duration(cmd.Timeout) * time.Second
+	if timeout <= 0 {
+		timeout = 3 * time.Second
+	}
+
+	fmt.Fprintf(os.Stderr, "Scanning for %s services (%s)...\n", serviceType, timeout)
+
+	services, err := ScanAll(serviceType, timeout)
+	if err != nil {
+		return fmt.Errorf("scan: %w", err)
+	}
+
+	if len(services) == 0 {
+		fmt.Fprintln(os.Stderr, "No services found.")
+		return nil
+	}
+
+	fmt.Fprintf(os.Stderr, "\nFound %d service(s):\n\n", len(services))
+	for i, svc := range services {
+		fmt.Fprintf(os.Stderr, "  %d) %s (%s:%d)\n", i+1, svc.Name, svc.Addr, svc.Port)
+	}
+
+	fmt.Fprintf(os.Stderr, "\nSelect a service (1-%d) or 0 to cancel: ", len(services))
+
+	var choice int
+	if _, err := fmt.Scanln(&choice); err != nil {
+		return fmt.Errorf("read selection: %w", err)
+	}
+
+	if choice == 0 {
+		fmt.Fprintln(os.Stderr, "Cancelled.")
+		return nil
+	}
+	if choice < 1 || choice > len(services) {
+		return fmt.Errorf("invalid selection: %d", choice)
+	}
+
+	selected := services[choice-1]
+	fmt.Fprintf(os.Stderr, "\nSelected: %s (%s:%d)\n", selected.Name, selected.Addr, selected.Port)
+
+	// Update config
+	cfg.MDNS.Name = selected.Name
+	if cmd.Service != "" {
+		cfg.MDNS.Service = cmd.Service
+	}
+
+	fmt.Fprintf(os.Stderr, "Writing to %s (existing comments will be lost)...\n", cmd.Config)
+
+	if err := WriteConfig(cmd.Config, cfg); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "Done. Set [mdns] name = %q\n", selected.Name)
 	return nil
 }

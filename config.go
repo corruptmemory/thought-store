@@ -45,6 +45,21 @@ func (c MDNSConfig) ServiceType() string {
 	return "_thought-store._tcp"
 }
 
+// WriteConfig marshals the config to TOML and writes it to the given path.
+func WriteConfig(path string, cfg *Config) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("create config file: %w", err)
+	}
+	defer f.Close()
+
+	encoder := toml.NewEncoder(f)
+	if err := encoder.Encode(cfg); err != nil {
+		return fmt.Errorf("encode config: %w", err)
+	}
+	return nil
+}
+
 func LoadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
