@@ -1,0 +1,11 @@
+root = "."
+tmp_dir = "tmp"
+
+[build]
+cmd = "./build.sh build"
+bin = "./thought-store serve --config thought-store.toml"
+include_ext = ["go", "templ", "toml", "css", "js"]
+exclude_dir = ["tmp", "static/vendor"]
+
+[screen]
+clear_on_rebuild = true

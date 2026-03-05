@@ -1,0 +1,9 @@
+[server]
+addr = ":3000"
+
+[database]
+url = "postgres://thoughtstore:thoughtstore@localhost/thoughtstore?sslmode=disable"
+
+[ollama]
+url = "http://localhost:11434"
+model = "mxbai-embed-large"
