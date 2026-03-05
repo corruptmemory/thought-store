@@ -1,9 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"os"
 
 	flags "github.com/jessevdk/go-flags"
@@ -71,11 +75,52 @@ func (cmd *ServeCmd) Execute(args []string) error {
 }
 
 func (cmd *CaptureCmd) Execute(args []string) error {
-	fmt.Println("capture: not yet implemented")
+	cfg, err := LoadConfig(cmd.Config)
+	if err != nil {
+		return err
+	}
+
+	body, _ := json.Marshal(captureRequest{Content: cmd.Args.Content})
+	resp, err := http.Post(
+		"http://localhost"+cfg.Server.Addr+"/api/thoughts",
+		"application/json",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		return fmt.Errorf("server request failed (is the server running?): %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("server error: %s", b)
+	}
+
+	var t Thought
+	json.NewDecoder(resp.Body).Decode(&t)
+	fmt.Printf("Captured: %s (%s)\n", t.Content, t.ID[:8])
 	return nil
 }
 
 func (cmd *SearchCmd) Execute(args []string) error {
-	fmt.Println("search: not yet implemented")
+	cfg, err := LoadConfig(cmd.Config)
+	if err != nil {
+		return err
+	}
+
+	u := fmt.Sprintf("http://localhost%s/api/search?q=%s&limit=%d",
+		cfg.Server.Addr, url.QueryEscape(cmd.Args.Query), cmd.Limit)
+	resp, err := http.Get(u)
+	if err != nil {
+		return fmt.Errorf("server request failed (is the server running?): %w", err)
+	}
+	defer resp.Body.Close()
+
+	var results []SearchResult
+	json.NewDecoder(resp.Body).Decode(&results)
+
+	for _, r := range results {
+		fmt.Printf("[%.1f%%] %s\n  %s\n\n", r.Similarity*100, r.CreatedAt.Local().Format("Jan 2 3:04pm"), r.Content)
+	}
 	return nil
 }
