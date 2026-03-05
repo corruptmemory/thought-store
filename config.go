@@ -16,6 +16,7 @@ type Config struct {
 	Database DatabaseConfig `toml:"database"`
 	Ollama   OllamaConfig   `toml:"ollama"`
 	MCP      MCPConfig      `toml:"mcp"`
+	MDNS     MDNSConfig     `toml:"mdns"`
 }
 
 type ServerConfig struct {
@@ -29,6 +30,19 @@ type DatabaseConfig struct {
 type OllamaConfig struct {
 	URL   string `toml:"url"`
 	Model string `toml:"model"`
+}
+
+type MDNSConfig struct {
+	Name    string `toml:"name"`
+	Service string `toml:"service"`
+}
+
+// ServiceType returns the configured service type or the default.
+func (c MDNSConfig) ServiceType() string {
+	if c.Service != "" {
+		return c.Service
+	}
+	return "_thought-store._tcp"
 }
 
 func LoadConfig(path string) (*Config, error) {
