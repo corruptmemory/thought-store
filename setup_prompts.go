@@ -32,7 +32,7 @@ func printError(msg string) {
 }
 
 func confirmPrompt(title string, defaultVal bool) (bool, error) {
-	var result bool
+	result := defaultVal
 	err := huh.NewConfirm().
 		Title(title).
 		Affirmative("Yes").
