@@ -80,6 +80,37 @@ func TestE2E(t *testing.T) {
 		t.Fatal("expected non-zero total in stats")
 	}
 
+	// Diagnostics
+	resp, err = client.Get(base + "/api/diagnostics")
+	if err != nil {
+		t.Fatalf("diagnostics: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var diag DiagnosticsReport
+	json.NewDecoder(resp.Body).Decode(&diag)
+	if diag.Mode != BrainModeLocal {
+		t.Fatalf("expected local mode, got %s", diag.Mode)
+	}
+	if diag.Postgres == nil {
+		t.Fatal("expected postgres diagnostics")
+	}
+	if diag.Postgres.ThoughtCount == 0 {
+		t.Fatal("expected non-zero thought count in diagnostics")
+	}
+	if !diag.Postgres.HNSWIndex {
+		t.Fatal("expected HNSW index to exist")
+	}
+	if diag.Ollama == nil {
+		t.Fatal("expected ollama diagnostics")
+	}
+	if diag.Ollama.EmbeddingDim != 1024 {
+		t.Fatalf("expected embedding dim 1024, got %d", diag.Ollama.EmbeddingDim)
+	}
+	if diag.GoVersion == "" {
+		t.Fatal("expected non-empty Go version")
+	}
+
 	// Cleanup
 	store.pool.Exec(ctx, "DELETE FROM thoughts WHERE source = 'web' AND content LIKE 'e2e test:%'")
 }

@@ -67,7 +67,12 @@
       "mcp__thought-store__capture_thought",
       "mcp__thought-store__search_thoughts",
       "mcp__thought-store__list_thoughts",
-      "mcp__thought-store__thought_stats"
+      "mcp__thought-store__thought_stats",
+      "mcp__thought-store__thought_diagnostics"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "thought-store"
+  ],
+  "enableAllProjectMcpServers": true
 }

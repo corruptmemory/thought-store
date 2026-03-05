@@ -68,8 +68,16 @@ func newMCPServer(brain ThoughtStore) *server.MCPServer {
 		statsHandler(brain),
 	)
 
+	srv.AddTool(
+		mcp.NewTool("thought_diagnostics",
+			mcp.WithDescription("Get diagnostic information about the thought store: database status, Ollama status, connection mode, versions, and uptime."),
+		),
+		diagnosticsHandler(brain),
+	)
+
 	return srv
 }
+
 
 func captureHandler(brain ThoughtStore) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -127,6 +135,18 @@ func listHandler(brain ThoughtStore) server.ToolHandlerFunc {
 		}
 
 		data, _ := json.Marshal(thoughts)
+		return mcp.NewToolResultText(string(data)), nil
+	}
+}
+
+func diagnosticsHandler(brain ThoughtStore) server.ToolHandlerFunc {
+	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		report, err := brain.Diagnostics(ctx)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("diagnostics failed: %v", err)), nil
+		}
+
+		data, _ := json.Marshal(report)
 		return mcp.NewToolResultText(string(data)), nil
 	}
 }
