@@ -23,6 +23,13 @@ type SearchResult struct {
 	Similarity float64 `json:"similarity"`
 }
 
+type StoreStats struct {
+	Total    int            `json:"total"`
+	OldestAt *time.Time     `json:"oldest_at,omitempty"`
+	NewestAt *time.Time     `json:"newest_at,omitempty"`
+	BySource map[string]int `json:"by_source"`
+}
+
 type Store struct {
 	pool *pgxpool.Pool
 }
@@ -100,6 +107,34 @@ func (s *Store) List(ctx context.Context, limit, offset int) ([]Thought, error) 
 		thoughts = append(thoughts, t)
 	}
 	return thoughts, rows.Err()
+}
+
+func (s *Store) Stats(ctx context.Context) (*StoreStats, error) {
+	var stats StoreStats
+	err := s.pool.QueryRow(ctx,
+		`SELECT COUNT(*), MIN(created_at), MAX(created_at) FROM thoughts`,
+	).Scan(&stats.Total, &stats.OldestAt, &stats.NewestAt)
+	if err != nil {
+		return nil, fmt.Errorf("stats query: %w", err)
+	}
+
+	rows, err := s.pool.Query(ctx,
+		`SELECT source, COUNT(*) FROM thoughts GROUP BY source`)
+	if err != nil {
+		return nil, fmt.Errorf("stats by source: %w", err)
+	}
+	defer rows.Close()
+
+	stats.BySource = make(map[string]int)
+	for rows.Next() {
+		var source string
+		var count int
+		if err := rows.Scan(&source, &count); err != nil {
+			return nil, fmt.Errorf("scan source count: %w", err)
+		}
+		stats.BySource[source] = count
+	}
+	return &stats, rows.Err()
 }
 
 func (s *Store) Search(ctx context.Context, embedding []float32, limit int) ([]SearchResult, error) {

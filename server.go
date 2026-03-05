@@ -32,6 +32,7 @@ func NewServer(store *Store, ollama *OllamaClient) *Server {
 	s.router.Post("/api/thoughts", s.handleCapture)
 	s.router.Get("/api/thoughts", s.handleList)
 	s.router.Get("/api/search", s.handleSearch)
+	s.router.Get("/api/stats", s.handleStats)
 
 	// Static files
 	fs := http.FileServer(http.Dir("static"))
@@ -139,6 +140,17 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(thoughts)
+}
+
+func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
+	stats, err := s.store.Stats(r.Context())
+	if err != nil {
+		http.Error(w, "stats failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(stats)
 }
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {

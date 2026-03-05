@@ -66,6 +66,19 @@ func TestE2E(t *testing.T) {
 		t.Fatalf("expected high similarity, got %.2f", results[0].Similarity)
 	}
 
+	// Stats
+	resp, err = client.Get(base + "/api/stats")
+	if err != nil {
+		t.Fatalf("stats: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var stats StoreStats
+	json.NewDecoder(resp.Body).Decode(&stats)
+	if stats.Total == 0 {
+		t.Fatal("expected non-zero total in stats")
+	}
+
 	// Cleanup
 	store.pool.Exec(ctx, "DELETE FROM thoughts WHERE source = 'web' AND content LIKE 'e2e test:%'")
 }
