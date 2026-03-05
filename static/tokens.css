@@ -1,0 +1,18 @@
+:root {
+    --font-sans: system-ui, -apple-system, sans-serif;
+    --font-mono: ui-monospace, monospace;
+    --color-bg: #0f0f0f;
+    --color-surface: #1a1a1a;
+    --color-surface-hover: #252525;
+    --color-border: #333;
+    --color-text: #e0e0e0;
+    --color-text-muted: #888;
+    --color-accent: #6c9eff;
+    --color-accent-hover: #8bb4ff;
+    --radius: 8px;
+    --space-xs: 4px;
+    --space-sm: 8px;
+    --space-md: 16px;
+    --space-lg: 24px;
+    --space-xl: 32px;
+}

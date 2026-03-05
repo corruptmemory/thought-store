@@ -1,0 +1,53 @@
+package templates
+
+templ Home(thoughts []ThoughtData) {
+	@Layout("Thought Store") {
+		<div class="header">
+			<h1>Thought Store</h1>
+			<button class="mode-toggle" onclick="toggleMode()">Search</button>
+		</div>
+		<div class="stream" id="stream">
+			if len(thoughts) == 0 {
+				<div class="empty-state">No thoughts yet. Start typing below.</div>
+			}
+			@ThoughtList(thoughts)
+		</div>
+		<div class="input-bar">
+			<form id="capture-form"
+				hx-post="/api/thoughts"
+				hx-target="#stream"
+				hx-swap="beforeend"
+				hx-on::after-request="this.reset(); document.getElementById('stream').scrollTo(0, document.getElementById('stream').scrollHeight)">
+				<input type="text" name="content" placeholder="What's on your mind?" autocomplete="off"/>
+				<button type="submit">Send</button>
+			</form>
+		</div>
+		<script>
+			document.getElementById('stream').scrollTo(0, document.getElementById('stream').scrollHeight);
+
+			function toggleMode() {
+				const btn = document.querySelector('.mode-toggle');
+				const form = document.getElementById('capture-form');
+				const input = form.querySelector('input');
+				const isSearch = btn.textContent === 'Capture';
+
+				if (isSearch) {
+					btn.textContent = 'Search';
+					form.setAttribute('hx-post', '/api/thoughts');
+					form.setAttribute('hx-swap', 'beforeend');
+					input.name = 'content';
+					input.placeholder = "What's on your mind?";
+					htmx.process(form);
+				} else {
+					btn.textContent = 'Capture';
+					form.setAttribute('hx-get', '/api/search');
+					form.setAttribute('hx-swap', 'innerHTML');
+					form.removeAttribute('hx-post');
+					input.name = 'q';
+					input.placeholder = 'Search your thoughts...';
+					htmx.process(form);
+				}
+			}
+		</script>
+	}
+}

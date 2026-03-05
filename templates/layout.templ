@@ -1,0 +1,18 @@
+package templates
+
+templ Layout(title string) {
+	<!DOCTYPE html>
+	<html lang="en">
+	<head>
+		<meta charset="UTF-8"/>
+		<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+		<title>{ title }</title>
+		<link rel="stylesheet" href="/static/tokens.css"/>
+		<link rel="stylesheet" href="/static/app.css"/>
+		<script src="/static/vendor/htmx.min.js"></script>
+	</head>
+	<body>
+		{ children... }
+	</body>
+	</html>
+}

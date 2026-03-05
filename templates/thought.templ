@@ -1,0 +1,35 @@
+package templates
+
+import (
+	"fmt"
+	"time"
+)
+
+type ThoughtData struct {
+	ID         string
+	Content    string
+	Source     string
+	CreatedAt  time.Time
+	Similarity *float64
+}
+
+templ ThoughtCard(t ThoughtData) {
+	<div class="thought">
+		<div class="thought-content">{ t.Content }</div>
+		<div class="thought-meta">
+			<span>{ t.Source }</span>
+			<span>{ t.CreatedAt.Local().Format("Jan 2 3:04pm") }</span>
+			if t.Similarity != nil {
+				<span class="thought-similarity">
+					{ fmt.Sprintf("%.1f%%", *t.Similarity * 100) }
+				</span>
+			}
+		</div>
+	</div>
+}
+
+templ ThoughtList(thoughts []ThoughtData) {
+	for _, t := range thoughts {
+		@ThoughtCard(t)
+	}
+}
