@@ -9,8 +9,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"time"
 
 	flags "github.com/jessevdk/go-flags"
+	mcpserver "github.com/mark3labs/mcp-go/server"
 )
 
 type ServeCmd struct {
@@ -32,10 +34,16 @@ type SearchCmd struct {
 	} `positional-args:"yes"`
 }
 
+type MCPCmd struct {
+	Config string `long:"config" default:"thought-store.toml" description:"Path to config file"`
+	Remote bool   `long:"remote" description:"Use HTTP client to connect to a remote thought-store server"`
+}
+
 var opts struct {
 	Serve   ServeCmd   `command:"serve" description:"Start the HTTP server"`
 	Capture CaptureCmd `command:"capture" description:"Capture a thought"`
 	Search  SearchCmd  `command:"search" description:"Search thoughts"`
+	MCP     MCPCmd     `command:"mcp" description:"Start MCP server (stdio) for Claude Code"`
 }
 
 func main() {
@@ -124,4 +132,38 @@ func (cmd *SearchCmd) Execute(args []string) error {
 		fmt.Printf("[%.1f%%] %s\n  %s\n\n", r.Similarity*100, r.CreatedAt.Local().Format("Jan 2 3:04pm"), r.Content)
 	}
 	return nil
+}
+
+func (cmd *MCPCmd) Execute(args []string) error {
+	cfg, err := LoadConfig(cmd.Config)
+	if err != nil {
+		return err
+	}
+
+	var brain ThoughtStore
+
+	if cmd.Remote {
+		if len(cfg.MCP.URLs) == 0 {
+			return fmt.Errorf("mcp.urls must be configured in %s for --remote mode", cmd.Config)
+		}
+		brain = NewRemoteBrain(cfg.MCP.URLs, 30*time.Second)
+	} else {
+		ctx := context.Background()
+
+		store, err := NewStore(ctx, cfg.Database.URL)
+		if err != nil {
+			return fmt.Errorf("connect to database: %w", err)
+		}
+		defer store.Close()
+
+		if err := store.Migrate(ctx); err != nil {
+			return fmt.Errorf("migrate: %w", err)
+		}
+
+		ollama := NewOllamaClient(cfg.Ollama.URL, cfg.Ollama.Model)
+		brain = NewLocalBrain(store, ollama)
+	}
+
+	srv := newMCPServer(brain)
+	return mcpserver.ServeStdio(srv)
 }

@@ -7,10 +7,15 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
+type MCPConfig struct {
+	URLs []string `toml:"urls"`
+}
+
 type Config struct {
 	Server   ServerConfig   `toml:"server"`
 	Database DatabaseConfig `toml:"database"`
 	Ollama   OllamaConfig   `toml:"ollama"`
+	MCP      MCPConfig      `toml:"mcp"`
 }
 
 type ServerConfig struct {

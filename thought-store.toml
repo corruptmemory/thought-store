@@ -7,3 +7,9 @@ url = "postgres://thoughtstore:thoughtstore@localhost/thoughtstore?sslmode=disab
 [ollama]
 url = "http://localhost:11434"
 model = "mxbai-embed-large"
+
+[mcp]
+urls = [
+    "http://localhost:3000",
+    "http://100.122.102.93:3000",
+]
