@@ -61,6 +61,54 @@ func (c *OllamaClient) Embed(ctx context.Context, text string) ([]float32, error
 	return result.Embedding, nil
 }
 
+type embedBatchRequest struct {
+	Model string   `json:"model"`
+	Input []string `json:"input"`
+}
+
+type embedBatchResponse struct {
+	Embeddings [][]float32 `json:"embeddings"`
+}
+
+// EmbedBatch embeds multiple texts in a single call using Ollama's /api/embed endpoint.
+func (c *OllamaClient) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
+	if len(texts) == 0 {
+		return nil, nil
+	}
+
+	body, err := json.Marshal(embedBatchRequest{Model: c.model, Input: texts})
+	if err != nil {
+		return nil, fmt.Errorf("marshal batch embed request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/embed", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("ollama batch request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ollama returned status %d", resp.StatusCode)
+	}
+
+	var result embedBatchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode batch response: %w", err)
+	}
+
+	if len(result.Embeddings) != len(texts) {
+		return nil, fmt.Errorf("expected %d embeddings, got %d", len(texts), len(result.Embeddings))
+	}
+
+	return result.Embeddings, nil
+}
+
 func (c *OllamaClient) Version(ctx context.Context) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/version", nil)
 	if err != nil {
