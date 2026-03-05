@@ -137,6 +137,45 @@ func (s *Store) Stats(ctx context.Context) (*StoreStats, error) {
 	return &stats, rows.Err()
 }
 
+func (s *Store) Diagnostics(ctx context.Context) *PostgresDiag {
+	diag := &PostgresDiag{
+		SchemaVersion: 1,
+		Status:        "connected",
+	}
+
+	// Connection info from pool config
+	cfg := s.pool.Config().ConnConfig
+	diag.Host = cfg.Host
+	diag.Port = cfg.Port
+	diag.Database = cfg.Database
+
+	// Pool stats
+	stat := s.pool.Stat()
+	diag.PoolTotal = stat.TotalConns()
+	diag.PoolIdle = stat.IdleConns()
+	diag.PoolInUse = stat.AcquiredConns()
+
+	// Postgres version
+	_ = s.pool.QueryRow(ctx, `SELECT version()`).Scan(&diag.Version)
+
+	// pgvector version
+	_ = s.pool.QueryRow(ctx,
+		`SELECT extversion FROM pg_extension WHERE extname = 'vector'`,
+	).Scan(&diag.PgvectorVersion)
+
+	// Thought count
+	_ = s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM thoughts`).Scan(&diag.ThoughtCount)
+
+	// HNSW index
+	var indexName string
+	err := s.pool.QueryRow(ctx,
+		`SELECT indexname FROM pg_indexes WHERE tablename = 'thoughts' AND indexname = 'thoughts_embedding_idx'`,
+	).Scan(&indexName)
+	diag.HNSWIndex = err == nil
+
+	return diag
+}
+
 func (s *Store) Search(ctx context.Context, embedding []float32, limit int) ([]SearchResult, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT id, content, source, created_at,

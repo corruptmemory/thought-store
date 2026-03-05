@@ -60,3 +60,101 @@ func (c *OllamaClient) Embed(ctx context.Context, text string) ([]float32, error
 
 	return result.Embedding, nil
 }
+
+func (c *OllamaClient) Version(ctx context.Context) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/version", nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	var v struct{ Version string }
+	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
+		return "", err
+	}
+	return v.Version, nil
+}
+
+// ModelInfo holds metadata about an Ollama model.
+type ModelInfo struct {
+	Family        string
+	ParameterSize string
+	Quantization  string
+	EmbeddingDim  int
+}
+
+func (c *OllamaClient) ShowModel(ctx context.Context) (*ModelInfo, error) {
+	body, _ := json.Marshal(struct {
+		Name string `json:"name"`
+	}{Name: c.model})
+
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/show", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var raw struct {
+		Details struct {
+			Family        string `json:"family"`
+			ParameterSize string `json:"parameter_size"`
+			Quantization  string `json:"quantization_level"`
+		} `json:"details"`
+		ModelInfo map[string]any `json:"model_info"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return nil, err
+	}
+
+	info := &ModelInfo{
+		Family:        raw.Details.Family,
+		ParameterSize: raw.Details.ParameterSize,
+		Quantization:  raw.Details.Quantization,
+	}
+
+	// Extract embedding dimension from model_info
+	if dim, ok := raw.ModelInfo["bert.embedding_length"]; ok {
+		if v, ok := dim.(float64); ok {
+			info.EmbeddingDim = int(v)
+		}
+	}
+
+	return info, nil
+}
+
+// Diagnostics gathers best-effort diagnostic info about the Ollama service.
+func (c *OllamaClient) Diagnostics(ctx context.Context) *OllamaDiag {
+	diag := &OllamaDiag{
+		URL:    c.baseURL,
+		Model:  c.model,
+		Status: "ok",
+	}
+
+	ver, err := c.Version(ctx)
+	if err != nil {
+		diag.Status = fmt.Sprintf("error: %v", err)
+		return diag
+	}
+	diag.Version = ver
+
+	info, err := c.ShowModel(ctx)
+	if err != nil {
+		return diag
+	}
+	diag.Family = info.Family
+	diag.ParameterSize = info.ParameterSize
+	diag.Quantization = info.Quantization
+	diag.EmbeddingDim = info.EmbeddingDim
+
+	return diag
+}
