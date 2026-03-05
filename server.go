@@ -12,15 +12,13 @@ import (
 
 type Server struct {
 	router *chi.Mux
-	store  *Store
-	ollama *OllamaClient
+	brain  ThoughtStore
 }
 
-func NewServer(store *Store, ollama *OllamaClient) *Server {
+func NewServer(brain ThoughtStore) *Server {
 	s := &Server{
 		router: chi.NewRouter(),
-		store:  store,
-		ollama: ollama,
+		brain:  brain,
 	}
 	s.router.Use(middleware.Logger)
 	s.router.Use(middleware.Recoverer)
@@ -50,7 +48,7 @@ func isHTMX(r *http.Request) bool {
 }
 
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
-	thoughts, err := s.store.List(r.Context(), 50, 0)
+	thoughts, err := s.brain.List(r.Context(), 50, 0)
 	if err != nil {
 		http.Error(w, "list failed: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -92,20 +90,14 @@ func (s *Server) handleCapture(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	embedding, err := s.ollama.Embed(r.Context(), content)
-	if err != nil {
-		http.Error(w, "embedding failed: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
 	source := "web"
 	if r.Header.Get("X-Source") != "" {
 		source = r.Header.Get("X-Source")
 	}
 
-	thought, err := s.store.Insert(r.Context(), content, embedding, source)
+	thought, err := s.brain.Capture(r.Context(), content, source)
 	if err != nil {
-		http.Error(w, "store failed: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "capture failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -132,7 +124,7 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	}
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
 
-	thoughts, err := s.store.List(r.Context(), limit, offset)
+	thoughts, err := s.brain.List(r.Context(), limit, offset)
 	if err != nil {
 		http.Error(w, "list failed: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -143,7 +135,7 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
-	stats, err := s.store.Stats(r.Context())
+	stats, err := s.brain.Stats(r.Context())
 	if err != nil {
 		http.Error(w, "stats failed: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -164,13 +156,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		limit = 5
 	}
 
-	embedding, err := s.ollama.Embed(r.Context(), q)
-	if err != nil {
-		http.Error(w, "embedding failed: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	results, err := s.store.Search(r.Context(), embedding, limit)
+	results, err := s.brain.Search(r.Context(), q, limit)
 	if err != nil {
 		http.Error(w, "search failed: "+err.Error(), http.StatusInternalServerError)
 		return

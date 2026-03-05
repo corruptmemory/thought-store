@@ -26,7 +26,8 @@ func TestE2E(t *testing.T) {
 	}
 
 	ollama := NewOllamaClient("http://localhost:11434", "mxbai-embed-large")
-	srv := NewServer(store, ollama)
+	brain := NewLocalBrain(store, ollama)
+	srv := NewServer(brain)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

@@ -68,7 +68,8 @@ func (cmd *ServeCmd) Execute(args []string) error {
 	}
 
 	ollama := NewOllamaClient(cfg.Ollama.URL, cfg.Ollama.Model)
-	srv := NewServer(store, ollama)
+	brain := NewLocalBrain(store, ollama)
+	srv := NewServer(brain)
 
 	fmt.Printf("Starting server on %s\n", cfg.Server.Addr)
 	return http.ListenAndServe(cfg.Server.Addr, srv)
