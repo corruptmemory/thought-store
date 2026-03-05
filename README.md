@@ -2,7 +2,9 @@
 
 A personal thought capture and semantic search system. Record thoughts from anywhere — web UI, CLI, or API — and find them later by meaning, not keywords.
 
-Inspired by [Nate Jones's PromptKit / Open Brain](https://promptkit.natebjones.com) concept.
+Inspired by Nate Jones's [Open Brain build guide](https://promptkit.natebjones.com/20260224_uq1_guide_main) and [PromptKit Prompt 1](https://promptkit.natebjones.com/20260224_uq1_promptkit_1) (memory seed migration).
+
+Nate's Open Brain runs on cloud free tiers (Supabase + OpenRouter + Slack). This project takes the same core idea — Postgres/pgvector storage, cosine similarity search, MCP integration, and the same 4-tool interface — but runs entirely self-hosted: local Postgres, local Ollama for embeddings, single Go binary, no internet required. Tailscale provides remote access when needed.
 
 ## What it does
 
@@ -18,7 +20,7 @@ Single Go binary. No npm, no node, no containers required.
 - **Go** with chi router, templ templates, htmx
 - **Postgres** with pgvector extension
 - **Ollama** running locally with mxbai-embed-large
-- **CLI** via go-flags with `serve`, `capture`, `search`, `mcp` subcommands
+- **CLI** via go-flags with `serve`, `capture`, `search`, `mcp`, `re-embed` subcommands
 - **MCP** server for native Claude Code integration (stdio transport)
 
 ## Prerequisites
@@ -60,6 +62,21 @@ Open the browser. Type a thought, hit Send. Toggle to Search mode to find though
 
 # Search
 ./thought-store search "authentication"
+```
+
+### Re-embed
+
+Re-vectorize all thoughts with the current Ollama model (e.g. after a model upgrade):
+
+```bash
+# Dry run (default) — shows what would happen
+./thought-store re-embed
+
+# Actually update embeddings
+./thought-store re-embed --apply
+
+# Tune batch size (default 50)
+./thought-store re-embed --apply --batch-size 100
 ```
 
 ### API

@@ -38,7 +38,7 @@ Always use `./build.sh` — never invoke `go build`, `go test`, or `templ genera
 ## Architecture
 
 ```
-main.go          CLI entrypoint (go-flags: serve, capture, search, mcp)
+main.go          CLI entrypoint (go-flags: serve, capture, search, mcp, re-embed)
 config.go        TOML config loading
 server.go        Chi router, API handlers with htmx content negotiation
 brain.go         ThoughtStore interface, LocalBrain (direct Postgres+Ollama)
@@ -60,6 +60,7 @@ static/          CSS (tokens.css, app.css) and vendored htmx
 - **ThoughtStore interface**: Both HTTP server and MCP server consume the same interface. LocalBrain talks directly to Postgres+Ollama; RemoteBrain talks HTTP with a URL fallback chain.
 - **MCP subcommand**: `./thought-store mcp` speaks stdio MCP for Claude Code. `--remote` flag switches from LocalBrain to RemoteBrain.
 - **Diagnostics**: `Diagnostics(ctx)` on the interface returns a structured report. LocalBrain queries Postgres and Ollama directly; RemoteBrain fetches `/api/diagnostics` and nests the server's report. `BrainMode` is a fake enum with `String()` and `MarshalText()`.
+- **Re-embed**: `./thought-store re-embed` re-vectorizes all thoughts using the current Ollama model. Dry-run by default; `--apply` to execute. Uses Ollama's `/api/embed` batch endpoint (50 texts/call by default, tunable via `--batch-size`).
 
 ## Tests
 
@@ -69,6 +70,7 @@ Integration tests against real Postgres and Ollama (no mocks). Tests skip gracef
 - `store_test.go` — insert/list/search round-trip
 - `remote_test.go` — RemoteBrain round-trip and URL fallback chain
 - `e2e_test.go` — full HTTP pipeline on random port, including diagnostics endpoint
+- `reembed_test.go` — batch embed, update embeddings, and post-re-embed search verification
 
 ## Config
 
