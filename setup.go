@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 )
 
 type SetupCmd struct {
@@ -347,7 +351,107 @@ func enablePgvector(adminUser, dbName string) error {
 }
 
 func (cmd *SetupCmd) setupOllama(cfg *Config, pm *packageManager) error {
+	printHeader("Ollama")
+
+	// NOTE: The embedding model is locked to mxbai-embed-large because the
+	// schema hardcodes vector(1024) in store.go:Migrate(). Changing the model
+	// requires changing the column dimension and re-embedding all thoughts.
+	// See docs/plans/2026-03-05-setup-design.md for the future migration path.
+	const model = "mxbai-embed-large"
+
+	ollamaURL := cfg.Ollama.URL
+
+	// 1. Check if Ollama is reachable
+	if !isOllamaRunning(ollamaURL) {
+		// Check if binary is on PATH
+		if _, lookErr := exec.LookPath("ollama"); lookErr != nil {
+			printWarn("Ollama is not installed")
+			if pm == nil {
+				fmt.Fprintln(os.Stderr, "  Install Ollama manually: https://ollama.ai")
+				return fmt.Errorf("ollama not installed and no package manager available")
+			}
+			install, err := confirmPrompt(fmt.Sprintf("Install Ollama via %s?", pm.name), true)
+			if err != nil {
+				return err
+			}
+			if !install {
+				return fmt.Errorf("ollama is required")
+			}
+			if err := runPackageInstall(pm, "ollama"); err != nil {
+				return fmt.Errorf("install ollama: %w", err)
+			}
+			printSuccess("Ollama installed")
+		} else {
+			printSuccess("Ollama binary found")
+		}
+
+		// Re-check after potential install
+		if !isOllamaRunning(ollamaURL) {
+			printWarn("Ollama service is not running")
+			fmt.Fprintln(os.Stderr, "  Start it with: systemctl start ollama")
+			fmt.Fprintln(os.Stderr, "  Or: ollama serve")
+			ready, err := confirmPrompt("Is Ollama running now?", false)
+			if err != nil {
+				return err
+			}
+			if !ready || !isOllamaRunning(ollamaURL) {
+				return fmt.Errorf("ollama is not running at %s", ollamaURL)
+			}
+		}
+	}
+	printSuccess(fmt.Sprintf("Ollama is running at %s", ollamaURL))
+
+	// 2. Check model
+	fmt.Fprintf(os.Stderr, "  Checking for model %s...\n", model)
+	if isModelAvailable(ollamaURL, model) {
+		printSuccess(fmt.Sprintf("Model %s is available", model))
+	} else {
+		printWarn(fmt.Sprintf("Model %s is not pulled", model))
+		pull, err := confirmPrompt(fmt.Sprintf("Pull %s? (may take a few minutes)", model), true)
+		if err != nil {
+			return err
+		}
+		if !pull {
+			fmt.Fprintf(os.Stderr, "  Run manually: ollama pull %s\n", model)
+			return fmt.Errorf("model %s not available", model)
+		}
+		if err := pullOllamaModel(model); err != nil {
+			return fmt.Errorf("pull model: %w", err)
+		}
+		printSuccess(fmt.Sprintf("Model %s pulled", model))
+	}
+
 	return nil
+}
+
+func isOllamaRunning(baseURL string) bool {
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(baseURL + "/api/version")
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
+}
+
+func isModelAvailable(baseURL, model string) bool {
+	body, _ := json.Marshal(struct {
+		Name string `json:"name"`
+	}{Name: model})
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Post(baseURL+"/api/show", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
+}
+
+func pullOllamaModel(model string) error {
+	cmd := exec.Command("ollama", "pull", model)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 func (cmd *SetupCmd) setupServer(cfg *Config) error {
