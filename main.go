@@ -99,6 +99,7 @@ var opts struct {
 	ReEmbed ReEmbedCmd `command:"re-embed" description:"Re-vectorize all thoughts with current model"`
 	Scan    ScanCmd    `command:"scan" description:"Scan for thought-store instances on the local network"`
 	Service ServiceCmd `command:"service" description:"Manage thought-store as a system service"`
+	Setup   SetupCmd   `command:"setup" description:"Interactive guided setup for new installations"`
 }
 
 func main() {
