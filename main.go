@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"net/http"
 	"os"
 
 	flags "github.com/jessevdk/go-flags"
@@ -48,8 +50,24 @@ func (cmd *ServeCmd) Execute(args []string) error {
 	if err != nil {
 		return err
 	}
+
+	ctx := context.Background()
+
+	store, err := NewStore(ctx, cfg.Database.URL)
+	if err != nil {
+		return fmt.Errorf("connect to database: %w", err)
+	}
+	defer store.Close()
+
+	if err := store.Migrate(ctx); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+
+	ollama := NewOllamaClient(cfg.Ollama.URL, cfg.Ollama.Model)
+	srv := NewServer(store, ollama)
+
 	fmt.Printf("Starting server on %s\n", cfg.Server.Addr)
-	return nil
+	return http.ListenAndServe(cfg.Server.Addr, srv)
 }
 
 func (cmd *CaptureCmd) Execute(args []string) error {
