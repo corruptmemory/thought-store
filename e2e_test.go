@@ -110,6 +110,12 @@ func TestE2E(t *testing.T) {
 	if diag.GoVersion == "" {
 		t.Fatal("expected non-empty Go version")
 	}
+	if len(diag.Postgres.Errors) > 0 {
+		t.Fatalf("unexpected postgres errors: %v", diag.Postgres.Errors)
+	}
+	if len(diag.Ollama.Errors) > 0 {
+		t.Fatalf("unexpected ollama errors: %v", diag.Ollama.Errors)
+	}
 
 	// Cleanup
 	store.pool.Exec(ctx, "DELETE FROM thoughts WHERE source = 'web' AND content LIKE 'e2e test:%'")

@@ -118,6 +118,7 @@ func (b *RemoteBrain) Diagnostics(ctx context.Context) (*DiagnosticsReport, erro
 		remoteDiag.ActiveURL = "none"
 		remoteDiag.NetworkType = "unreachable"
 		remoteDiag.Latency = "n/a"
+		remoteDiag.Errors = append(remoteDiag.Errors, fmt.Sprintf("probe: %v", err))
 		report.Remote = remoteDiag
 		return report, nil
 	}
@@ -145,7 +146,9 @@ func (b *RemoteBrain) Diagnostics(ctx context.Context) (*DiagnosticsReport, erro
 
 	// Decode the server's diagnostics report
 	var serverDiag DiagnosticsReport
-	if err := json.NewDecoder(resp.Body).Decode(&serverDiag); err == nil {
+	if err := json.NewDecoder(resp.Body).Decode(&serverDiag); err != nil {
+		remoteDiag.Errors = append(remoteDiag.Errors, fmt.Sprintf("decode server diagnostics: %v", err))
+	} else {
 		remoteDiag.ServerDiag = &serverDiag
 	}
 

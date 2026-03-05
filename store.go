@@ -156,22 +156,31 @@ func (s *Store) Diagnostics(ctx context.Context) *PostgresDiag {
 	diag.PoolInUse = stat.AcquiredConns()
 
 	// Postgres version
-	_ = s.pool.QueryRow(ctx, `SELECT version()`).Scan(&diag.Version)
+	if err := s.pool.QueryRow(ctx, `SELECT version()`).Scan(&diag.Version); err != nil {
+		diag.Errors = append(diag.Errors, fmt.Sprintf("pg version: %v", err))
+	}
 
 	// pgvector version
-	_ = s.pool.QueryRow(ctx,
+	if err := s.pool.QueryRow(ctx,
 		`SELECT extversion FROM pg_extension WHERE extname = 'vector'`,
-	).Scan(&diag.PgvectorVersion)
+	).Scan(&diag.PgvectorVersion); err != nil {
+		diag.Errors = append(diag.Errors, fmt.Sprintf("pgvector version: %v", err))
+	}
 
 	// Thought count
-	_ = s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM thoughts`).Scan(&diag.ThoughtCount)
+	if err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM thoughts`).Scan(&diag.ThoughtCount); err != nil {
+		diag.Errors = append(diag.Errors, fmt.Sprintf("thought count: %v", err))
+	}
 
 	// HNSW index
 	var indexName string
-	err := s.pool.QueryRow(ctx,
+	if err := s.pool.QueryRow(ctx,
 		`SELECT indexname FROM pg_indexes WHERE tablename = 'thoughts' AND indexname = 'thoughts_embedding_idx'`,
-	).Scan(&indexName)
-	diag.HNSWIndex = err == nil
+	).Scan(&indexName); err != nil {
+		diag.Errors = append(diag.Errors, fmt.Sprintf("hnsw index: %v", err))
+	} else {
+		diag.HNSWIndex = true
+	}
 
 	return diag
 }

@@ -142,19 +142,21 @@ func (c *OllamaClient) Diagnostics(ctx context.Context) *OllamaDiag {
 
 	ver, err := c.Version(ctx)
 	if err != nil {
-		diag.Status = fmt.Sprintf("error: %v", err)
-		return diag
+		diag.Status = "error"
+		diag.Errors = append(diag.Errors, fmt.Sprintf("version: %v", err))
+	} else {
+		diag.Version = ver
 	}
-	diag.Version = ver
 
 	info, err := c.ShowModel(ctx)
 	if err != nil {
-		return diag
+		diag.Errors = append(diag.Errors, fmt.Sprintf("show model: %v", err))
+	} else {
+		diag.Family = info.Family
+		diag.ParameterSize = info.ParameterSize
+		diag.Quantization = info.Quantization
+		diag.EmbeddingDim = info.EmbeddingDim
 	}
-	diag.Family = info.Family
-	diag.ParameterSize = info.ParameterSize
-	diag.Quantization = info.Quantization
-	diag.EmbeddingDim = info.EmbeddingDim
 
 	return diag
 }

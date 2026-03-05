@@ -54,7 +54,8 @@ type PostgresDiag struct {
 	HNSWIndex       bool   `json:"hnsw_index"`
 	PoolTotal       int32  `json:"pool_total"`
 	PoolIdle        int32  `json:"pool_idle"`
-	PoolInUse       int32  `json:"pool_in_use"`
+	PoolInUse       int32    `json:"pool_in_use"`
+	Errors          []string `json:"errors,omitempty"`
 }
 
 // OllamaDiag contains diagnostics for the Ollama embedding service.
@@ -66,7 +67,8 @@ type OllamaDiag struct {
 	Family        string `json:"family,omitempty"`
 	ParameterSize string `json:"parameter_size,omitempty"`
 	Quantization  string `json:"quantization,omitempty"`
-	EmbeddingDim  int    `json:"embedding_dim,omitempty"`
+	EmbeddingDim  int      `json:"embedding_dim,omitempty"`
+	Errors        []string `json:"errors,omitempty"`
 }
 
 // RemoteDiag contains diagnostics for a remote brain connection.
@@ -76,6 +78,7 @@ type RemoteDiag struct {
 	NetworkType string             `json:"network_type"`
 	Latency     string             `json:"latency"`
 	ServerDiag  *DiagnosticsReport `json:"server_diagnostics,omitempty"`
+	Errors      []string           `json:"errors,omitempty"`
 }
 
 // tailscaleCIDR is the CGNAT range used by Tailscale (100.64.0.0/10).
