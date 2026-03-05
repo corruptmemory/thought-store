@@ -31,6 +31,7 @@ func NewServer(brain ThoughtStore) *Server {
 	s.router.Get("/api/thoughts", s.handleList)
 	s.router.Get("/api/search", s.handleSearch)
 	s.router.Get("/api/stats", s.handleStats)
+	s.router.Get("/api/diagnostics", s.handleDiagnostics)
 
 	// Static files
 	fs := http.FileServer(http.Dir("static"))
@@ -180,4 +181,14 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(results)
+}
+
+func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
+	report, err := s.brain.Diagnostics(r.Context())
+	if err != nil {
+		http.Error(w, "diagnostics failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(report)
 }

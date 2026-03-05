@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"runtime"
 	"time"
 )
 
@@ -16,14 +17,16 @@ var _ ThoughtStore = (*RemoteBrain)(nil)
 // RemoteBrain implements ThoughtStore by talking to a thought-store HTTP server.
 // It tries URLs in order, using the first one that responds.
 type RemoteBrain struct {
-	urls   []string
-	client *http.Client
+	urls      []string
+	client    *http.Client
+	startedAt time.Time
 }
 
 func NewRemoteBrain(urls []string, timeout time.Duration) *RemoteBrain {
 	return &RemoteBrain{
-		urls:   urls,
-		client: &http.Client{Timeout: timeout},
+		urls:      urls,
+		client:    &http.Client{Timeout: timeout},
+		startedAt: time.Now(),
 	}
 }
 
@@ -92,6 +95,62 @@ func (b *RemoteBrain) Stats(ctx context.Context) (*StoreStats, error) {
 		return nil, fmt.Errorf("decode stats: %w", err)
 	}
 	return &stats, nil
+}
+
+func (b *RemoteBrain) Diagnostics(ctx context.Context) (*DiagnosticsReport, error) {
+	report := &DiagnosticsReport{
+		Mode:      BrainModeRemote,
+		StartedAt: b.startedAt,
+		Uptime:    time.Since(b.startedAt).Truncate(time.Second).String(),
+		GoVersion: runtime.Version(),
+	}
+
+	remoteDiag := &RemoteDiag{
+		URLs: b.urls,
+	}
+
+	// Probe: find which URL responds and measure latency
+	start := time.Now()
+	resp, err := b.doRequest(ctx, "GET", "/api/diagnostics", nil, nil)
+	latency := time.Since(start)
+
+	if err != nil {
+		remoteDiag.ActiveURL = "none"
+		remoteDiag.NetworkType = "unreachable"
+		remoteDiag.Latency = "n/a"
+		report.Remote = remoteDiag
+		return report, nil
+	}
+	defer resp.Body.Close()
+
+	remoteDiag.Latency = latency.Truncate(time.Millisecond).String()
+
+	// Determine which URL responded by probing each individually
+	for _, u := range b.urls {
+		probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		req, reqErr := http.NewRequestWithContext(probeCtx, "GET", u+"/api/stats", nil)
+		if reqErr != nil {
+			cancel()
+			continue
+		}
+		probeResp, probeErr := b.client.Do(req)
+		cancel()
+		if probeErr == nil {
+			probeResp.Body.Close()
+			remoteDiag.ActiveURL = u
+			remoteDiag.NetworkType = NetworkType(u)
+			break
+		}
+	}
+
+	// Decode the server's diagnostics report
+	var serverDiag DiagnosticsReport
+	if err := json.NewDecoder(resp.Body).Decode(&serverDiag); err == nil {
+		remoteDiag.ServerDiag = &serverDiag
+	}
+
+	report.Remote = remoteDiag
+	return report, nil
 }
 
 // doRequest tries each URL in the fallback chain until one responds.

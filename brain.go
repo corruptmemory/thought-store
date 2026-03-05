@@ -1,6 +1,10 @@
 package main
 
-import "context"
+import (
+	"context"
+	"runtime"
+	"time"
+)
 
 // ThoughtStore is the core interface for interacting with the thought store.
 // Both LocalBrain (direct Postgres+Ollama) and RemoteBrain (HTTP client) implement it.
@@ -9,18 +13,20 @@ type ThoughtStore interface {
 	Search(ctx context.Context, query string, limit int) ([]SearchResult, error)
 	List(ctx context.Context, limit, offset int) ([]Thought, error)
 	Stats(ctx context.Context) (*StoreStats, error)
+	Diagnostics(ctx context.Context) (*DiagnosticsReport, error)
 }
 
 var _ ThoughtStore = (*LocalBrain)(nil)
 
 // LocalBrain implements ThoughtStore using direct Postgres and Ollama access.
 type LocalBrain struct {
-	store  *Store
-	ollama *OllamaClient
+	store     *Store
+	ollama    *OllamaClient
+	startedAt time.Time
 }
 
 func NewLocalBrain(store *Store, ollama *OllamaClient) *LocalBrain {
-	return &LocalBrain{store: store, ollama: ollama}
+	return &LocalBrain{store: store, ollama: ollama, startedAt: time.Now()}
 }
 
 func (b *LocalBrain) Capture(ctx context.Context, content string, source string) (*Thought, error) {
@@ -45,4 +51,15 @@ func (b *LocalBrain) List(ctx context.Context, limit, offset int) ([]Thought, er
 
 func (b *LocalBrain) Stats(ctx context.Context) (*StoreStats, error) {
 	return b.store.Stats(ctx)
+}
+
+func (b *LocalBrain) Diagnostics(ctx context.Context) (*DiagnosticsReport, error) {
+	return &DiagnosticsReport{
+		Mode:      BrainModeLocal,
+		StartedAt: b.startedAt,
+		Uptime:    time.Since(b.startedAt).Truncate(time.Second).String(),
+		GoVersion: runtime.Version(),
+		Postgres:  b.store.Diagnostics(ctx),
+		Ollama:    b.ollama.Diagnostics(ctx),
+	}, nil
 }
