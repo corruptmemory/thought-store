@@ -20,7 +20,7 @@ Single Go binary. No npm, no node, no containers required.
 - **Go** with chi router, templ templates, htmx
 - **Postgres** with pgvector extension
 - **Ollama** running locally with mxbai-embed-large
-- **CLI** via go-flags with `serve`, `capture`, `search`, `mcp`, `re-embed`, `scan` subcommands
+- **CLI** via go-flags with `serve`, `capture`, `search`, `mcp`, `re-embed`, `scan`, `service` subcommands
 - **MCP** server for native Claude Code integration (stdio transport)
 
 ## Prerequisites
@@ -104,6 +104,30 @@ The server advertises itself when `serve` starts. Remote clients discover it by 
 **Remote mode auto-discovery:**
 
 With `[mdns].name` configured, `mcp --remote` discovers the server automatically — no hardcoded URLs needed (though configured URLs still work as fallback).
+
+### Service Management
+
+Install thought-store as a system service (Linux/systemd):
+
+```bash
+# Install as user service (default)
+./thought-store service install --config thought-store.toml
+
+# Install with binary and config copied to standard locations
+./thought-store service install --config thought-store.toml \
+  --copy-binary --install-config
+
+# Install as system service (requires sudo)
+sudo ./thought-store service install --config thought-store.toml --system
+
+# Enable, check status, view logs
+./thought-store service enable
+./thought-store service status
+./thought-store service logs -f
+
+# Uninstall
+./thought-store service uninstall
+```
 
 ### API
 
