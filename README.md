@@ -20,7 +20,7 @@ Single Go binary. No npm, no node, no containers required.
 - **Go** with chi router, templ templates, htmx
 - **Postgres** with pgvector extension
 - **Ollama** running locally with mxbai-embed-large
-- **CLI** via go-flags with `serve`, `capture`, `search`, `mcp`, `re-embed`, `scan`, `service` subcommands
+- **CLI** via go-flags with `serve`, `capture`, `search`, `mcp`, `re-embed`, `scan`, `service`, `setup` subcommands
 - **MCP** server for native Claude Code integration (stdio transport)
 
 ## Prerequisites
@@ -39,12 +39,17 @@ cd thought-store
 ./build.sh --refresh-htmx
 ./build.sh build
 
-# Edit config
+# Interactive guided setup (checks Postgres, Ollama, provisions DB, writes config)
+./thought-store setup
+
+# Or manually edit config
 $EDITOR thought-store.toml
 
 # Start server (runs migrations automatically)
 ./thought-store serve --config thought-store.toml
 ```
+
+The `setup` wizard detects your package manager (pacman/yay/paru/brew), checks for Postgres and Ollama, offers to install missing dependencies, provisions the database (user, DB, pgvector extension), and generates `thought-store.toml`.
 
 Open http://localhost:3000 for the web UI.
 

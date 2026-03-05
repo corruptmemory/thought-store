@@ -38,7 +38,7 @@ Always use `./build.sh` — never invoke `go build`, `go test`, or `templ genera
 ## Architecture
 
 ```
-main.go          CLI entrypoint (go-flags: serve, capture, search, mcp, re-embed, scan, service)
+main.go          CLI entrypoint (go-flags: serve, capture, search, mcp, re-embed, scan, service, setup)
 config.go        TOML config loading
 server.go        Chi router, API handlers with htmx content negotiation
 brain.go         ThoughtStore interface, LocalBrain (direct Postgres+Ollama)
@@ -51,6 +51,8 @@ mdns.go          mDNS service advertisement and discovery (hashicorp/mdns)
 service.go       Platform-agnostic ServiceManager interface and types
 service_linux.go systemd implementation (install, uninstall, enable, disable, status, logs)
 service_unsupported.go  Stub for non-Linux platforms
+setup.go         Interactive guided setup wizard (Postgres, Ollama, config generation)
+setup_prompts.go huh/lipgloss prompt wrappers for setup
 templates/       Templ components (layout, home, thought card)
 static/          CSS (tokens.css, app.css) and vendored htmx
 ```
@@ -66,6 +68,7 @@ static/          CSS (tokens.css, app.css) and vendored htmx
 - **Diagnostics**: `Diagnostics(ctx)` on the interface returns a structured report. LocalBrain queries Postgres and Ollama directly; RemoteBrain fetches `/api/diagnostics` and nests the server's report. `BrainMode` is a fake enum with `String()` and `MarshalText()`.
 - **Re-embed**: `./thought-store re-embed` re-vectorizes all thoughts using the current Ollama model. Dry-run by default; `--apply` to execute. Uses Ollama's `/api/embed` batch endpoint (50 texts/call by default, tunable via `--batch-size`).
 - **mDNS discovery**: `[mdns].name` enables both advertising (on `serve`) and discovery (on `mcp --remote`). `./thought-store scan` finds all instances and writes the selection to config. Uses `hashicorp/mdns` (pure Go, cross-platform).
+- **Setup wizard**: `./thought-store setup` interactively checks/installs Postgres and Ollama, provisions the database (user, DB, pgvector), and generates `thought-store.toml`. Uses `charmbracelet/huh` for forms and `lipgloss` for styled output. Detects package managers (paru/yay/pacman/brew). Supports local and remote Postgres.
 - **Service management**: `./thought-store service` subcommand with install/uninstall/enable/disable/status/logs. Platform-agnostic `ServiceManager` interface with build-tagged implementations: systemd on Linux, stub on other platforms. User services by default, `--system` for system-level. Reusable pattern for future projects.
 
 ## Tests
@@ -80,6 +83,7 @@ Integration tests against real Postgres and Ollama (no mocks). Tests skip gracef
 - `mdns_test.go` — mDNS advertise/discover round-trip, ParsePort unit test
 - `service_test.go` — ResolvePaths with temp files, missing file error handling
 - `service_linux_test.go` — unit file path generation, systemctl show output parsing
+- `setup_test.go` — package manager detection, install command generation, config file checks
 
 ## Config
 
@@ -95,3 +99,5 @@ Integration tests against real Postgres and Ollama (no mocks). Tests skip gracef
 - `github.com/pgvector/pgvector-go` — pgvector support
 - `github.com/mark3labs/mcp-go` — MCP server (stdio transport)
 - `github.com/hashicorp/mdns` — mDNS service advertisement and discovery
+- `github.com/charmbracelet/huh` — interactive terminal forms
+- `github.com/charmbracelet/lipgloss` — styled terminal output
