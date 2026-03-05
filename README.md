@@ -20,7 +20,7 @@ Single Go binary. No npm, no node, no containers required.
 - **Go** with chi router, templ templates, htmx
 - **Postgres** with pgvector extension
 - **Ollama** running locally with mxbai-embed-large
-- **CLI** via go-flags with `serve`, `capture`, `search`, `mcp`, `re-embed` subcommands
+- **CLI** via go-flags with `serve`, `capture`, `search`, `mcp`, `re-embed`, `scan` subcommands
 - **MCP** server for native Claude Code integration (stdio transport)
 
 ## Prerequisites
@@ -79,6 +79,32 @@ Re-vectorize all thoughts with the current Ollama model (e.g. after a model upgr
 ./thought-store re-embed --apply --batch-size 100
 ```
 
+### Network Discovery
+
+Thought-store can advertise itself on the local network via mDNS, so remote clients find it automatically.
+
+**Server side** — add to `thought-store.toml`:
+
+```toml
+[mdns]
+name = "jim-brain"
+```
+
+The server advertises itself when `serve` starts. Remote clients discover it by name.
+
+**Find instances on the network:**
+
+```bash
+# Scan for all thought-store instances
+./thought-store scan
+
+# Select one to auto-configure your config
+```
+
+**Remote mode auto-discovery:**
+
+With `[mdns].name` configured, `mcp --remote` discovers the server automatically — no hardcoded URLs needed (though configured URLs still work as fallback).
+
 ### API
 
 ```bash
@@ -124,6 +150,9 @@ urls = [
     "http://localhost:3000",
     "http://100.122.102.93:3000",
 ]
+
+[mdns]
+name = "jim-brain"
 ```
 
 ## MCP Integration (Claude Code)

@@ -38,7 +38,7 @@ Always use `./build.sh` — never invoke `go build`, `go test`, or `templ genera
 ## Architecture
 
 ```
-main.go          CLI entrypoint (go-flags: serve, capture, search, mcp, re-embed)
+main.go          CLI entrypoint (go-flags: serve, capture, search, mcp, re-embed, scan)
 config.go        TOML config loading
 server.go        Chi router, API handlers with htmx content negotiation
 brain.go         ThoughtStore interface, LocalBrain (direct Postgres+Ollama)
@@ -47,6 +47,7 @@ mcp.go           MCP server setup (5 tools: capture, search, list, stats, diagno
 diagnostics.go   Diagnostic report types, BrainMode enum, NetworkType classifier
 store.go         Postgres + pgvector (insert, list, cosine search)
 ollama.go        Ollama embedding client (/api/embeddings endpoint)
+mdns.go          mDNS service advertisement and discovery (hashicorp/mdns)
 templates/       Templ components (layout, home, thought card)
 static/          CSS (tokens.css, app.css) and vendored htmx
 ```
@@ -61,6 +62,7 @@ static/          CSS (tokens.css, app.css) and vendored htmx
 - **MCP subcommand**: `./thought-store mcp` speaks stdio MCP for Claude Code. `--remote` flag switches from LocalBrain to RemoteBrain.
 - **Diagnostics**: `Diagnostics(ctx)` on the interface returns a structured report. LocalBrain queries Postgres and Ollama directly; RemoteBrain fetches `/api/diagnostics` and nests the server's report. `BrainMode` is a fake enum with `String()` and `MarshalText()`.
 - **Re-embed**: `./thought-store re-embed` re-vectorizes all thoughts using the current Ollama model. Dry-run by default; `--apply` to execute. Uses Ollama's `/api/embed` batch endpoint (50 texts/call by default, tunable via `--batch-size`).
+- **mDNS discovery**: `[mdns].name` enables both advertising (on `serve`) and discovery (on `mcp --remote`). `./thought-store scan` finds all instances and writes the selection to config. Uses `hashicorp/mdns` (pure Go, cross-platform).
 
 ## Tests
 
@@ -71,10 +73,11 @@ Integration tests against real Postgres and Ollama (no mocks). Tests skip gracef
 - `remote_test.go` — RemoteBrain round-trip and URL fallback chain
 - `e2e_test.go` — full HTTP pipeline on random port, including diagnostics endpoint
 - `reembed_test.go` — batch embed, update embeddings, and post-re-embed search verification
+- `mdns_test.go` — mDNS advertise/discover round-trip, ParsePort unit test
 
 ## Config
 
-`thought-store.toml` with sections: `[server]`, `[database]`, `[ollama]`, `[mcp]`.
+`thought-store.toml` with sections: `[server]`, `[database]`, `[ollama]`, `[mcp]`, `[mdns]`.
 
 ## Dependencies
 
@@ -85,3 +88,4 @@ Integration tests against real Postgres and Ollama (no mocks). Tests skip gracef
 - `github.com/jackc/pgx/v5` — Postgres driver
 - `github.com/pgvector/pgvector-go` — pgvector support
 - `github.com/mark3labs/mcp-go` — MCP server (stdio transport)
+- `github.com/hashicorp/mdns` — mDNS service advertisement and discovery
