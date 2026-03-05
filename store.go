@@ -30,6 +30,12 @@ type StoreStats struct {
 	BySource map[string]int `json:"by_source"`
 }
 
+// ThoughtRow is a minimal row for re-embedding (no vector data loaded).
+type ThoughtRow struct {
+	ID      string
+	Content string
+}
+
 type Store struct {
 	pool *pgxpool.Pool
 }
@@ -183,6 +189,46 @@ func (s *Store) Diagnostics(ctx context.Context) *PostgresDiag {
 	}
 
 	return diag
+}
+
+// ListAllContent returns all thought IDs and content for re-embedding.
+func (s *Store) ListAllContent(ctx context.Context) ([]ThoughtRow, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, content FROM thoughts ORDER BY created_at ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("list all content: %w", err)
+	}
+	defer rows.Close()
+
+	var thoughts []ThoughtRow
+	for rows.Next() {
+		var t ThoughtRow
+		if err := rows.Scan(&t.ID, &t.Content); err != nil {
+			return nil, fmt.Errorf("scan thought row: %w", err)
+		}
+		thoughts = append(thoughts, t)
+	}
+	return thoughts, rows.Err()
+}
+
+// UpdateEmbeddings updates the embedding column for the given thought IDs in a transaction.
+func (s *Store) UpdateEmbeddings(ctx context.Context, ids []string, embeddings [][]float32) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	for i, id := range ids {
+		_, err := tx.Exec(ctx,
+			`UPDATE thoughts SET embedding = $1 WHERE id = $2`,
+			pgvector.NewVector(embeddings[i]), id)
+		if err != nil {
+			return fmt.Errorf("update embedding for %s: %w", id, err)
+		}
+	}
+
+	return tx.Commit(ctx)
 }
 
 func (s *Store) Search(ctx context.Context, embedding []float32, limit int) ([]SearchResult, error) {
