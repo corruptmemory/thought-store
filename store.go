@@ -60,6 +60,12 @@ func (s *Store) Close() {
 }
 
 func (s *Store) Migrate(ctx context.Context) error {
+	// WARNING: The vector dimension (1024) is coupled to the embedding model
+	// (mxbai-embed-large). Changing models requires changing this dimension.
+	//
+	// Future: decouple by moving embeddings to a separate table with a 1:1 FK
+	// to thoughts, allowing model switches via re-embed without schema changes.
+	// See docs/plans/2026-03-05-setup-design.md "Future: Embedding Dimension Decoupling".
 	_, err := s.pool.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS thoughts (
 			id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
