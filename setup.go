@@ -455,14 +455,57 @@ func pullOllamaModel(model string) error {
 }
 
 func (cmd *SetupCmd) setupServer(cfg *Config) error {
+	printHeader("Server")
+	addr, err := inputPrompt("Listen address", ":3000")
+	if err != nil {
+		return err
+	}
+	cfg.Server.Addr = addr
+	printSuccess(fmt.Sprintf("Server will listen on %s", addr))
 	return nil
 }
 
 func (cmd *SetupCmd) setupMDNS(cfg *Config) error {
+	printHeader("Network Discovery (mDNS)")
+	enable, err := confirmPrompt("Advertise this instance on your local network via mDNS?", false)
+	if err != nil {
+		return err
+	}
+	if !enable {
+		return nil
+	}
+	hostname, _ := os.Hostname()
+	defaultName := hostname
+	if defaultName == "" {
+		defaultName = "my-brain"
+	}
+	name, err := inputPrompt("Instance name", defaultName)
+	if err != nil {
+		return err
+	}
+	cfg.MDNS.Name = name
+	printSuccess(fmt.Sprintf("Will advertise as %q", name))
 	return nil
 }
 
 func (cmd *SetupCmd) writeConfig(cfg *Config) error {
+	printHeader("Writing Config")
+	if err := WriteConfig(cmd.Config, cfg); err != nil {
+		return err
+	}
+	printSuccess(fmt.Sprintf("Wrote %s", cmd.Config))
+
+	fmt.Fprintln(os.Stderr)
+	printHeader("Setup Complete")
+	fmt.Fprintf(os.Stderr, "  Server:   %s\n", cfg.Server.Addr)
+	fmt.Fprintf(os.Stderr, "  Database: %s\n", cfg.Database.URL)
+	fmt.Fprintf(os.Stderr, "  Ollama:   %s (model: %s)\n", cfg.Ollama.URL, cfg.Ollama.Model)
+	if cfg.MDNS.Name != "" {
+		fmt.Fprintf(os.Stderr, "  mDNS:     %s\n", cfg.MDNS.Name)
+	}
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintf(os.Stderr, "  Next: ./thought-store serve --config %s\n", cmd.Config)
+	fmt.Fprintln(os.Stderr)
 	return nil
 }
 
