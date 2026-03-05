@@ -51,6 +51,46 @@ type ScanCmd struct {
 	Timeout int    `long:"timeout" default:"3" description:"Discovery timeout in seconds"`
 }
 
+type ServiceCmd struct {
+	Install   ServiceInstallCmd   `command:"install" description:"Install as a system service"`
+	Uninstall ServiceUninstallCmd `command:"uninstall" description:"Remove the system service"`
+	Enable    ServiceEnableCmd    `command:"enable" description:"Enable service to start on boot"`
+	Disable   ServiceDisableCmd   `command:"disable" description:"Disable service from starting on boot"`
+	Status    ServiceStatusCmd    `command:"status" description:"Show service status"`
+	Logs      ServiceLogsCmd      `command:"logs" description:"Show service logs"`
+}
+
+type ServiceInstallCmd struct {
+	Config     string `long:"config" default:"thought-store.toml" description:"Path to config file"`
+	CopyBinary bool   `long:"copy-binary" description:"Copy binary to install directory"`
+	InstallDir string `long:"install-dir" default:"/usr/local/bin" description:"Directory to copy binary to"`
+	CopyConfig bool   `long:"install-config" description:"Copy config to standard location"`
+	System     bool   `long:"system" description:"Install as system service (requires sudo)"`
+	Force      bool   `long:"force" description:"Overwrite existing service file"`
+}
+
+type ServiceUninstallCmd struct {
+	System bool `long:"system" description:"Uninstall system service (requires sudo)"`
+}
+
+type ServiceEnableCmd struct {
+	System bool `long:"system" description:"Enable system service"`
+}
+
+type ServiceDisableCmd struct {
+	System bool `long:"system" description:"Disable system service"`
+}
+
+type ServiceStatusCmd struct {
+	System bool `long:"system" description:"Check system service status"`
+}
+
+type ServiceLogsCmd struct {
+	Follow bool `long:"follow" short:"f" description:"Follow log output"`
+	Lines  int  `long:"lines" short:"n" default:"50" description:"Number of lines to show"`
+	System bool `long:"system" description:"Show system service logs"`
+}
+
 var opts struct {
 	Serve   ServeCmd   `command:"serve" description:"Start the HTTP server"`
 	Capture CaptureCmd `command:"capture" description:"Capture a thought"`
@@ -58,6 +98,7 @@ var opts struct {
 	MCP     MCPCmd     `command:"mcp" description:"Start MCP server (stdio) for Claude Code"`
 	ReEmbed ReEmbedCmd `command:"re-embed" description:"Re-vectorize all thoughts with current model"`
 	Scan    ScanCmd    `command:"scan" description:"Scan for thought-store instances on the local network"`
+	Service ServiceCmd `command:"service" description:"Manage thought-store as a system service"`
 }
 
 func main() {
@@ -355,4 +396,79 @@ func (cmd *ScanCmd) Execute(args []string) error {
 
 	fmt.Fprintf(os.Stderr, "Done. Set [mdns] name = %q\n", selected.Name)
 	return nil
+}
+
+func (cmd *ServiceInstallCmd) Execute(args []string) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("find executable: %w", err)
+	}
+
+	binaryPath, configPath, err := ResolvePaths(exe, cmd.Config)
+	if err != nil {
+		return err
+	}
+
+	mgr := NewServiceManager(serviceName, cmd.System)
+	return mgr.Install(ServiceOpts{
+		BinaryPath: binaryPath,
+		ConfigPath: configPath,
+		CopyBinary: cmd.CopyBinary,
+		InstallDir: cmd.InstallDir,
+		CopyConfig: cmd.CopyConfig,
+		System:     cmd.System,
+		Force:      cmd.Force,
+	})
+}
+
+func (cmd *ServiceUninstallCmd) Execute(args []string) error {
+	mgr := NewServiceManager(serviceName, cmd.System)
+	return mgr.Uninstall()
+}
+
+func (cmd *ServiceEnableCmd) Execute(args []string) error {
+	mgr := NewServiceManager(serviceName, cmd.System)
+	return mgr.Enable()
+}
+
+func (cmd *ServiceDisableCmd) Execute(args []string) error {
+	mgr := NewServiceManager(serviceName, cmd.System)
+	return mgr.Disable()
+}
+
+func (cmd *ServiceStatusCmd) Execute(args []string) error {
+	mgr := NewServiceManager(serviceName, cmd.System)
+	status, err := mgr.Status()
+	if err != nil {
+		return err
+	}
+
+	if !status.Installed {
+		fmt.Println("Not installed")
+		return nil
+	}
+
+	state := "stopped"
+	if status.Running {
+		state = "running"
+	}
+	enabled := "disabled"
+	if status.Enabled {
+		enabled = "enabled"
+	}
+
+	fmt.Printf("Status:  %s\n", state)
+	fmt.Printf("Enabled: %s\n", enabled)
+	if status.PID > 0 {
+		fmt.Printf("PID:     %d\n", status.PID)
+	}
+	if status.Uptime != "" {
+		fmt.Printf("Since:   %s\n", status.Uptime)
+	}
+	return nil
+}
+
+func (cmd *ServiceLogsCmd) Execute(args []string) error {
+	mgr := NewServiceManager(serviceName, cmd.System)
+	return mgr.Logs(cmd.Follow, cmd.Lines)
 }
