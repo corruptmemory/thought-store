@@ -11,6 +11,8 @@ type ThoughtStore interface {
 	Stats(ctx context.Context) (*StoreStats, error)
 }
 
+var _ ThoughtStore = (*LocalBrain)(nil)
+
 // LocalBrain implements ThoughtStore using direct Postgres and Ollama access.
 type LocalBrain struct {
 	store  *Store
