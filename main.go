@@ -39,11 +39,18 @@ type MCPCmd struct {
 	Remote bool   `long:"remote" description:"Use HTTP client to connect to a remote thought-store server"`
 }
 
+type ReEmbedCmd struct {
+	Config    string `long:"config" default:"thought-store.toml" description:"Path to config file"`
+	Apply     bool   `long:"apply" description:"Actually update embeddings (default is dry-run)"`
+	BatchSize int    `long:"batch-size" default:"50" description:"Number of thoughts per Ollama batch call"`
+}
+
 var opts struct {
 	Serve   ServeCmd   `command:"serve" description:"Start the HTTP server"`
 	Capture CaptureCmd `command:"capture" description:"Capture a thought"`
 	Search  SearchCmd  `command:"search" description:"Search thoughts"`
 	MCP     MCPCmd     `command:"mcp" description:"Start MCP server (stdio) for Claude Code"`
+	ReEmbed ReEmbedCmd `command:"re-embed" description:"Re-vectorize all thoughts with current model"`
 }
 
 func main() {
@@ -166,4 +173,82 @@ func (cmd *MCPCmd) Execute(args []string) error {
 
 	srv := newMCPServer(brain)
 	return mcpserver.ServeStdio(srv)
+}
+
+func (cmd *ReEmbedCmd) Execute(args []string) error {
+	cfg, err := LoadConfig(cmd.Config)
+	if err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+
+	store, err := NewStore(ctx, cfg.Database.URL)
+	if err != nil {
+		return fmt.Errorf("connect to database: %w", err)
+	}
+	defer store.Close()
+
+	ollama := NewOllamaClient(cfg.Ollama.URL, cfg.Ollama.Model)
+
+	// Pre-flight: verify Ollama is reachable and get model info
+	info, err := ollama.ShowModel(ctx)
+	if err != nil {
+		return fmt.Errorf("cannot reach Ollama: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "Model: %s (%s, %s, %dd embeddings)\n",
+		cfg.Ollama.Model, info.Family, info.ParameterSize, info.EmbeddingDim)
+
+	// Load all thoughts
+	thoughts, err := store.ListAllContent(ctx)
+	if err != nil {
+		return fmt.Errorf("load thoughts: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "Thoughts to re-embed: %d\n", len(thoughts))
+
+	if len(thoughts) == 0 {
+		fmt.Fprintln(os.Stderr, "Nothing to do.")
+		return nil
+	}
+
+	if !cmd.Apply {
+		fmt.Fprintln(os.Stderr, "\nDry run — no changes made. Use --apply to update embeddings.")
+		return nil
+	}
+
+	// Process in batches
+	batchSize := cmd.BatchSize
+	if batchSize <= 0 {
+		batchSize = 50
+	}
+
+	total := len(thoughts)
+	for i := 0; i < total; i += batchSize {
+		end := min(i+batchSize, total)
+		batch := thoughts[i:end]
+
+		// Collect texts for this batch
+		texts := make([]string, len(batch))
+		ids := make([]string, len(batch))
+		for j, t := range batch {
+			texts[j] = t.Content
+			ids[j] = t.ID
+		}
+
+		// Embed batch
+		embeddings, err := ollama.EmbedBatch(ctx, texts)
+		if err != nil {
+			return fmt.Errorf("embed batch %d-%d: %w", i+1, end, err)
+		}
+
+		// Update database
+		if err := store.UpdateEmbeddings(ctx, ids, embeddings); err != nil {
+			return fmt.Errorf("update batch %d-%d: %w", i+1, end, err)
+		}
+
+		fmt.Fprintf(os.Stderr, "  re-embedded %d/%d\n", end, total)
+	}
+
+	fmt.Fprintln(os.Stderr, "Done.")
+	return nil
 }
