@@ -611,8 +611,8 @@ func (cmd *SyncPullCmd) Execute(args []string) error {
 		return fmt.Errorf("import: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "Imported: %d new instances, %d new thoughts, %d skipped, %d queued for re-embed\n",
-		result.NewInstances, result.NewThoughts, result.Skipped, result.ReembedQueued)
+	fmt.Fprintf(os.Stderr, "Imported: %d new instances, %d new thoughts, %d skipped, %d queued for re-embed, %d forgotten\n",
+		result.NewInstances, result.NewThoughts, result.Skipped, result.ReembedQueued, result.Forgotten)
 
 	// If the local server is running, tell it to reload embeddings
 	if result.NewThoughts > 0 {
@@ -683,7 +683,7 @@ func (cmd *SyncPushCmd) Execute(args []string) error {
 	var result ImportResult
 	json.NewDecoder(resp.Body).Decode(&result)
 
-	fmt.Fprintf(os.Stderr, "Peer imported: %d new instances, %d new thoughts, %d skipped, %d queued for re-embed\n",
-		result.NewInstances, result.NewThoughts, result.Skipped, result.ReembedQueued)
+	fmt.Fprintf(os.Stderr, "Peer imported: %d new instances, %d new thoughts, %d skipped, %d queued for re-embed, %d forgotten\n",
+		result.NewInstances, result.NewThoughts, result.Skipped, result.ReembedQueued, result.Forgotten)
 	return nil
 }
