@@ -38,15 +38,16 @@ Always use `./build.sh` — never invoke `go build`, `go test`, or `templ genera
 ## Architecture
 
 ```
-main.go          CLI entrypoint (go-flags: serve, capture, search, mcp, re-embed, scan, service, setup)
+main.go          CLI entrypoint (go-flags: serve, capture, search, mcp, re-embed, scan, service, setup, sync)
 config.go        TOML config loading
-server.go        Chi router, API handlers with htmx content negotiation
+server.go        Chi router, API handlers, sync endpoints, reload endpoint
 brain.go         ThoughtStore interface, LocalBrain (direct SQLite+Ollama)
 remote.go        RemoteBrain (HTTP client with URL fallback chain)
 mcp.go           MCP server setup (5 tools: capture, search, list, stats, diagnostics)
 diagnostics.go   Diagnostic report types, BrainMode enum, NetworkType classifier
-sqlite_store.go   SQLite store (insert, list, search, embeddings)
+sqlite_store.go   SQLite store (insert, list, search, embeddings, import helpers)
 vecindex.go      SIMD-accelerated in-memory vector index (viterin/vek)
+sync.go          Bundle export/import: zstd tarballs, gossip-style merge
 ollama.go        Ollama embedding client (/api/embeddings endpoint)
 mdns.go          mDNS service advertisement and discovery (hashicorp/mdns)
 service.go       Platform-agnostic ServiceManager interface and types
@@ -71,6 +72,7 @@ static/          CSS (tokens.css, app.css) and vendored htmx
 - **mDNS discovery**: `[mdns].name` enables both advertising (on `serve`) and discovery (on `mcp --remote`). `./thought-store scan` finds all instances and writes the selection to config. Uses `hashicorp/mdns` (pure Go, cross-platform).
 - **Setup wizard**: `./thought-store setup` interactively checks/installs Ollama, prompts for SQLite path, and generates `thought-store.toml`. Uses `charmbracelet/huh` for forms and `lipgloss` for styled output. Detects package managers (paru/yay/pacman/brew).
 - **Service management**: `./thought-store service` subcommand with install/uninstall/enable/disable/status/logs. Platform-agnostic `ServiceManager` interface with build-tagged implementations: systemd on Linux, stub on other platforms. User services by default, `--system` for system-level. Reusable pattern for future projects.
+- **Distributed sync**: Gossip-style full-state snapshot exchange. `ExportBundle` checkpoints WAL, packs `brain.db` + `assets/` into a zstd tarball with canonical `brain.db` name. `ImportBundle` opens the foreign DB read-only, imports new instances by UUID, deduplicates thoughts by `unique_id`, transfers embeddings when models match (queues for re-embed when they don't). Append-only thoughts + UUIDs = CRDT by construction. CLI: `sync pull --from URL`, `sync push --to URL`. HTTP: `GET /api/sync` (export), `POST /api/sync` (import). `POST /api/reload` re-reads embeddings into VecIndex after external DB changes; `sync pull` calls it automatically.
 
 ## Tests
 
@@ -85,15 +87,50 @@ Integration tests against real Ollama (no mocks). SQLite tests use t.TempDir() f
 - `service_test.go` — ResolvePaths with temp files, missing file error handling
 - `service_linux_test.go` — unit file path generation, systemctl show output parsing
 - `setup_test.go` — package manager detection, install command generation, config file checks
+- `sync_test.go` — export, unpack round-trip, import, transitive sync (C→B→A), model mismatch
+- `sync_http_test.go` — HTTP sync round-trip (GET export, POST import between two servers)
 
-## Future direction: distributed sync
+## Future direction
 
-See `docs/plans/2026-03-05-sqlite-migration-design.md` for the full design.
+Design docs: `docs/plans/2026-03-05-sync-design.md`, `docs/plans/2026-03-05-sync.md`
 
-- **Sync bundles** (future): compressed SQLite DB + content-addressed asset blobs. Import by `unique_id`, preserve original source and instance provenance. Sync is transparent — not a capture mechanism, just transport.
-- **Re-vectorize on import** (future): if local model differs from source, imported thoughts get re-embedded.
-- **Rich media** (future): supplemental files, images, data sets, code snippets, audio, video, calendar data — stored as content-addressed blobs alongside the SQLite DB.
-- **Memory optimization** (future): at >1M thoughts (~4GB index), explore mmap, float16 quantization, or disk-backed ANN index.
+### Security (needs research)
+
+No auth on any endpoint currently. Sync endpoints (`/api/sync`) are wide open. Needs:
+- Authentication for HTTP API and sync endpoints
+- Authorization model (who can push/pull)
+- Encryption of bundles in transit (TLS) and at rest
+- Requires research to get right — don't rush this.
+
+### Chat integration ("bolt a brain on top")
+
+The thought store is a storage/retrieval layer. A separate "brain" service would sit between chat platforms and the thought store, acting as an intermediary:
+- **Inbound channels**: Slack, WhatsApp, Discord, browser plugin, Android app
+- **Architecture**: Chat adapter → Brain service (LLM-powered) → Thought Store API
+- The brain interprets natural language commands, decides when to capture vs search vs respond
+- The thought store instance that faces chat services should have this brain layer; other instances just sync
+- The MCP server already provides the right interface — the brain could be an MCP client
+
+### Mobile (Android)
+
+Need to figure out how to get thoughts in/out from an Android phone:
+- Browser-based capture via the web UI (already works if server is reachable)
+- Tasker/Automate integration hitting the HTTP API
+- Share intent → HTTP POST to `/api/thoughts`
+- Dedicated Android app (PWA or native) — heavyweight option
+- Tailscale for reaching the home server from mobile
+
+### Rich media (future)
+
+Supplemental files, images, data sets, code snippets, audio, video, calendar data — stored as content-addressed blobs alongside the SQLite DB. The sync bundle tarball already reserves `assets/` for this.
+
+### Thought coalescing (future, breaks CRDT)
+
+Ideas about merging/refining related thoughts into synthesized entries. This would break the current append-only CRDT property (thoughts are immutable, identified by UUID). Needs careful design if pursued — possibly a separate "synthesis" layer that doesn't mutate the original thoughts.
+
+### Memory optimization (future)
+
+At >1M thoughts (~4GB index), explore mmap, float16 quantization, or disk-backed ANN index.
 
 ## Config
 
@@ -109,6 +146,7 @@ See `docs/plans/2026-03-05-sqlite-migration-design.md` for the full design.
 - `github.com/viterin/vek` — SIMD-accelerated vector operations
 - `github.com/google/uuid` — UUID generation
 - `github.com/mark3labs/mcp-go` — MCP server (stdio transport)
+- `github.com/klauspost/compress/zstd` — fast compression for sync bundles
 - `github.com/hashicorp/mdns` — mDNS service advertisement and discovery
 - `github.com/charmbracelet/huh` — interactive terminal forms
 - `github.com/charmbracelet/lipgloss` — styled terminal output
