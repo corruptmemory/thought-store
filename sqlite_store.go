@@ -406,13 +406,3 @@ func decodeVector(b []byte) []float32 {
 	}
 	return v
 }
-
-// SQLiteDiag contains diagnostics for the SQLite database.
-// TODO: Move to diagnostics.go in Task 4
-type SQLiteDiag struct {
-	Version       string   `json:"version"`
-	Status        string   `json:"status"`
-	ThoughtCount  int      `json:"thought_count"`
-	FileSizeBytes int64    `json:"file_size_bytes,omitempty"`
-	Errors        []string `json:"errors,omitempty"`
-}

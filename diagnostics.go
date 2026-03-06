@@ -39,6 +39,7 @@ type DiagnosticsReport struct {
 	Postgres  *PostgresDiag `json:"postgres,omitempty"`
 	Ollama    *OllamaDiag   `json:"ollama,omitempty"`
 	Remote    *RemoteDiag   `json:"remote,omitempty"`
+	SQLite    *SQLiteDiag   `json:"sqlite,omitempty"`
 	MDNS      *MDNSDiag     `json:"mdns,omitempty"`
 }
 
@@ -69,6 +70,15 @@ type OllamaDiag struct {
 	ParameterSize string `json:"parameter_size,omitempty"`
 	Quantization  string `json:"quantization,omitempty"`
 	EmbeddingDim  int      `json:"embedding_dim,omitempty"`
+	Errors        []string `json:"errors,omitempty"`
+}
+
+// SQLiteDiag contains diagnostics for the SQLite database.
+type SQLiteDiag struct {
+	Version       string   `json:"version"`
+	Status        string   `json:"status"`
+	ThoughtCount  int      `json:"thought_count"`
+	FileSizeBytes int64    `json:"file_size_bytes,omitempty"`
 	Errors        []string `json:"errors,omitempty"`
 }
 
