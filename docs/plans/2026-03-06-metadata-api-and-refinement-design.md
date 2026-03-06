@@ -144,8 +144,8 @@ Within a single transaction:
 1. Embed the new content (via Ollama)
 2. Insert the new summary thought (`StateActive`)
 3. Insert DAG edges into `refined_thoughts` for each source
-4. Set each source thought's state to `StateRefined`
-5. Remove source embeddings from VecIndex (they drop out of search)
+4. Set each source thought's state to `StateRefined` (idempotent — sources already refined from a previous refinement are unchanged)
+5. Remove source embeddings from VecIndex if they were active (they drop out of search)
 6. Attach metadata to the summary thought (delete-before-add not needed — it's new)
 7. Add the new thought's embedding to VecIndex
 
@@ -173,7 +173,35 @@ Same pattern as `importMetadata` in `sync.go`:
 
 ### 6. ForgetThought cascade update
 
-`ForgetThought` already deletes `thought_metadata` rows. It should also delete `refined_thoughts` edges where the forgotten thought is a source. If the forgotten thought is a target (summary), the source thoughts should revert to `StateActive` (they're no longer rolled up into anything).
+`ForgetThought` already deletes `thought_metadata` rows. Refinement adds two more cascade behaviors:
+
+**Forgetting a source thought:** Delete `refined_thoughts` edges where the forgotten thought is a source. The summary (target) thought remains valid — it's its own thought with its own content and UUID. The edge is just provenance metadata.
+
+**Forgetting a summary (target) thought:** Delete `refined_thoughts` edges where the forgotten thought is a target. Then conditionally revert each source thought to `StateActive` — but **only if it has no remaining outgoing refinement edges.** A source may participate in multiple refinements:
+
+```
+A, B → D (refinement 1)
+A, C → E (refinement 2 — shares source A)
+Forget D → delete A→D, B→D edges
+B has 0 remaining source edges → revert to StateActive ✓
+A still has A→E edge → stays StateRefined ✓
+```
+
+The invariant: **a thought is active if and only if it has zero outgoing refinement edges and is not forgotten.**
+
+Implementation:
+```sql
+-- After deleting edges where target = forgotten_thought_id,
+-- for each former source, only revert if no remaining edges:
+UPDATE thoughts SET state = 0
+WHERE id = ?
+  AND state = 1
+  AND NOT EXISTS (
+    SELECT 1 FROM refined_thoughts WHERE source_thought_id = ?
+  )
+```
+
+Sources that revert to `StateActive` must also be re-added to the VecIndex (their embeddings still exist in the DB — refinement doesn't delete them).
 
 ### 7. Interface changes
 
