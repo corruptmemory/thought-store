@@ -14,6 +14,7 @@ require (
 	github.com/jessevdk/go-flags v1.6.1
 	github.com/mark3labs/mcp-go v0.44.1
 	github.com/pgvector/pgvector-go v0.3.0
+	github.com/viterin/vek v0.4.3
 	modernc.org/sqlite v1.46.1
 )
 
@@ -30,6 +31,7 @@ require (
 	github.com/charmbracelet/x/cellbuf v0.0.13 // indirect
 	github.com/charmbracelet/x/exp/strings v0.0.0-20240722160745-212f7b056ed0 // indirect
 	github.com/charmbracelet/x/term v0.2.1 // indirect
+	github.com/chewxy/math32 v1.10.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
@@ -50,6 +52,7 @@ require (
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/spf13/cast v1.7.1 // indirect
+	github.com/viterin/partial v1.1.0 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
