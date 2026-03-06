@@ -7,6 +7,64 @@ import (
 	"testing"
 )
 
+func newTestStoreAt(t *testing.T, name string) (*SQLiteStore, string, int, int) {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), name+".db")
+	store, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore %s: %v", name, err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	ctx := context.Background()
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate %s: %v", name, err)
+	}
+
+	instanceID, err := store.EnsureInstance(ctx, name, "")
+	if err != nil {
+		t.Fatalf("EnsureInstance %s: %v", name, err)
+	}
+	modelID, err := store.EnsureModel(ctx, "test-model", "", 4)
+	if err != nil {
+		t.Fatalf("EnsureModel %s: %v", name, err)
+	}
+	if err := store.SetActiveModel(ctx, modelID); err != nil {
+		t.Fatalf("SetActiveModel %s: %v", name, err)
+	}
+
+	return store, dbPath, instanceID, modelID
+}
+
+func exportToFile(t *testing.T, ctx context.Context, store *SQLiteStore, dbPath string) string {
+	t.Helper()
+	bundlePath := filepath.Join(t.TempDir(), "bundle-"+filepath.Base(dbPath)+".tar.zst")
+	f, err := os.Create(bundlePath)
+	if err != nil {
+		t.Fatalf("create bundle: %v", err)
+	}
+	if err := ExportBundle(ctx, store, dbPath, f); err != nil {
+		t.Fatalf("ExportBundle: %v", err)
+	}
+	f.Close()
+	return bundlePath
+}
+
+func importFromFile(t *testing.T, ctx context.Context, store *SQLiteStore, myUID string, modelID int, bundlePath string) *ImportResult {
+	t.Helper()
+	f, err := os.Open(bundlePath)
+	if err != nil {
+		t.Fatalf("open bundle: %v", err)
+	}
+	defer f.Close()
+
+	result, err := ImportBundle(ctx, store, myUID, modelID, f)
+	if err != nil {
+		t.Fatalf("ImportBundle: %v", err)
+	}
+	return result
+}
+
 func newTestStoreWithData(t *testing.T) (*SQLiteStore, string) {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "test.db")
@@ -215,4 +273,46 @@ func TestImportBundle(t *testing.T) {
 	if result2.Skipped != 2 {
 		t.Fatalf("expected 2 skipped on re-import, got %d", result2.Skipped)
 	}
+}
+
+func TestTransitiveSync(t *testing.T) {
+	ctx := context.Background()
+
+	storeA, dbPathA, instA, modelA := newTestStoreAt(t, "machine-A")
+	storeB, dbPathB, instB, modelB := newTestStoreAt(t, "machine-B")
+	storeC, dbPathC, instC, modelC := newTestStoreAt(t, "machine-C")
+
+	// Each captures a local thought
+	storeA.Insert(ctx, "from A", []float32{0.1, 0.2, 0.3, 0.4}, "cli", instA, modelA)
+	storeB.Insert(ctx, "from B", []float32{0.5, 0.6, 0.7, 0.8}, "web", instB, modelB)
+	storeC.Insert(ctx, "from C", []float32{0.9, 0.8, 0.7, 0.6}, "mcp", instC, modelC)
+
+	// C -> B: B pulls from C
+	uidB, _ := storeB.InstanceUID(ctx, instB)
+	bundleC := exportToFile(t, ctx, storeC, dbPathC)
+	importFromFile(t, ctx, storeB, uidB, modelB, bundleC)
+
+	// B now has 2 thoughts (own + C's)
+	thoughtsB, _ := storeB.List(ctx, 10, 0)
+	if len(thoughtsB) != 2 {
+		t.Fatalf("B should have 2, got %d", len(thoughtsB))
+	}
+
+	// B -> A: A pulls from B (which contains C's thought transitively)
+	uidA, _ := storeA.InstanceUID(ctx, instA)
+	bundleB := exportToFile(t, ctx, storeB, dbPathB)
+	result := importFromFile(t, ctx, storeA, uidA, modelA, bundleB)
+
+	// A should have 3 (own + B + C)
+	thoughtsA, _ := storeA.List(ctx, 10, 0)
+	if len(thoughtsA) != 3 {
+		t.Fatalf("A should have 3 after transitive sync, got %d", len(thoughtsA))
+	}
+	if result.NewThoughts != 2 {
+		t.Fatalf("expected 2 new thoughts, got %d", result.NewThoughts)
+	}
+
+	// Suppress unused variable warnings
+	_ = dbPathA
+	_ = modelC
 }
