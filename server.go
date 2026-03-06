@@ -90,11 +90,13 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 }
 
 type captureRequest struct {
-	Content string `json:"content"`
+	Content  string                 `json:"content"`
+	Metadata []ThoughtMetadataEntry `json:"metadata,omitempty"`
 }
 
 func (s *Server) handleCapture(w http.ResponseWriter, r *http.Request) {
 	var content string
+	var metadata []ThoughtMetadataEntry
 
 	if r.Header.Get("Content-Type") == "application/x-www-form-urlencoded" {
 		content = r.FormValue("content")
@@ -105,6 +107,7 @@ func (s *Server) handleCapture(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		content = req.Content
+		metadata = req.Metadata
 	}
 
 	if content == "" {
@@ -117,7 +120,7 @@ func (s *Server) handleCapture(w http.ResponseWriter, r *http.Request) {
 		source = r.Header.Get("X-Source")
 	}
 
-	thought, err := s.brain.Capture(r.Context(), content, source)
+	thought, err := s.brain.Capture(r.Context(), content, source, metadata)
 	if err != nil {
 		http.Error(w, "capture failed: "+err.Error(), http.StatusInternalServerError)
 		return

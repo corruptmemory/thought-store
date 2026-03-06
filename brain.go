@@ -9,7 +9,7 @@ import (
 // ThoughtStore is the core interface for interacting with the thought store.
 // Both LocalBrain (direct SQLite+Ollama) and RemoteBrain (HTTP client) implement it.
 type ThoughtStore interface {
-	Capture(ctx context.Context, content string, source string) (*Thought, error)
+	Capture(ctx context.Context, content string, source string, metadata []ThoughtMetadataEntry) (*Thought, error)
 	Search(ctx context.Context, query string, limit int) ([]SearchResult, error)
 	List(ctx context.Context, limit, offset int) ([]Thought, error)
 	Stats(ctx context.Context) (*StoreStats, error)
@@ -47,12 +47,12 @@ func NewLocalBrain(store *SQLiteStore, ollama *OllamaClient, vecIndex *VecIndex,
 	}
 }
 
-func (b *LocalBrain) Capture(ctx context.Context, content string, source string) (*Thought, error) {
+func (b *LocalBrain) Capture(ctx context.Context, content string, source string, metadata []ThoughtMetadataEntry) (*Thought, error) {
 	embedding, err := b.ollama.Embed(ctx, content)
 	if err != nil {
 		return nil, err
 	}
-	thought, err := b.store.Insert(ctx, content, embedding, source, b.instanceID, b.modelID)
+	thought, err := b.store.InsertWithMetadata(ctx, content, embedding, source, b.instanceID, b.modelID, metadata)
 	if err != nil {
 		return nil, err
 	}

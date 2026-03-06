@@ -69,7 +69,7 @@ func TestRemoteBrain(t *testing.T) {
 	remote := NewRemoteBrain([]string{base}, nil, 5*time.Second)
 
 	// Capture
-	thought, err := remote.Capture(ctx, "remote test: distributed systems are hard", "test")
+	thought, err := remote.Capture(ctx, "remote test: distributed systems are hard", "test", nil)
 	if err != nil {
 		t.Fatalf("Capture: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestRemoteBrainFallback(t *testing.T) {
 
 	// Seed a thought so stats returns non-zero
 	direct := NewRemoteBrain([]string{base}, nil, 5*time.Second)
-	if _, err := direct.Capture(ctx, "fallback test: seed thought", "test"); err != nil {
+	if _, err := direct.Capture(ctx, "fallback test: seed thought", "test", nil); err != nil {
 		t.Fatalf("seed Capture: %v", err)
 	}
 

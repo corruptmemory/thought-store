@@ -44,8 +44,12 @@ func (b *RemoteBrain) allURLs() []string {
 	return urls
 }
 
-func (b *RemoteBrain) Capture(ctx context.Context, content string, source string) (*Thought, error) {
-	body, _ := json.Marshal(captureRequest{Content: content})
+func (b *RemoteBrain) Capture(ctx context.Context, content string, source string, metadata []ThoughtMetadataEntry) (*Thought, error) {
+	type remoteCapture struct {
+		Content  string                 `json:"content"`
+		Metadata []ThoughtMetadataEntry `json:"metadata,omitempty"`
+	}
+	body, _ := json.Marshal(remoteCapture{Content: content, Metadata: metadata})
 	resp, err := b.doRequest(ctx, "POST", "/api/thoughts", bytes.NewReader(body), http.Header{
 		"Content-Type": {"application/json"},
 		"X-Source":     {source},

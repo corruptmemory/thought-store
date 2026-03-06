@@ -27,6 +27,9 @@ func newMCPServer(brain ThoughtStore) *server.MCPServer {
 				mcp.Description("Source of the thought (default: conversation)"),
 				mcp.DefaultString("conversation"),
 			),
+			mcp.WithString("metadata",
+				mcp.Description(`Optional metadata as JSON array of {"type":"person|date|tag|action_item","value":"..."} objects`),
+			),
 		),
 		captureHandler(brain),
 	)
@@ -87,7 +90,15 @@ func captureHandler(brain ThoughtStore) server.ToolHandlerFunc {
 		}
 		source := mcp.ParseString(request, "source", "conversation")
 
-		thought, err := brain.Capture(ctx, content, source)
+		var metadata []ThoughtMetadataEntry
+		metaJSON := mcp.ParseString(request, "metadata", "")
+		if metaJSON != "" {
+			if err := json.Unmarshal([]byte(metaJSON), &metadata); err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("invalid metadata JSON: %v", err)), nil
+			}
+		}
+
+		thought, err := brain.Capture(ctx, content, source, metadata)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("capture failed: %v", err)), nil
 		}

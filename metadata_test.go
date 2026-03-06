@@ -323,6 +323,39 @@ func TestRemoveThoughtMetadata(t *testing.T) {
 	}
 }
 
+func TestCaptureWithMetadata(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "capture-meta.db")
+	store, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	store.Migrate(ctx)
+	instID, _ := store.EnsureInstance(ctx, "test", "")
+	modelID, _ := store.EnsureModel(ctx, "test-model", "", 4)
+	store.SetActiveModel(ctx, modelID)
+
+	meta := []ThoughtMetadataEntry{
+		{Type: MetadataPerson, Value: "Sarah"},
+		{Type: MetadataTag, Value: "Go"},
+	}
+
+	thought, err := store.InsertWithMetadata(ctx, "met Sarah about Go", []float32{0.1, 0.2, 0.3, 0.4}, "cli", instID, modelID, meta)
+	if err != nil {
+		t.Fatalf("InsertWithMetadata: %v", err)
+	}
+
+	if len(thought.Metadata) != 2 {
+		t.Fatalf("expected 2 metadata entries, got %d", len(thought.Metadata))
+	}
+
+	thoughts, _ := store.List(ctx, 10, 0)
+	if len(thoughts[0].Metadata) != 2 {
+		t.Fatalf("expected 2 metadata entries from List, got %d", len(thoughts[0].Metadata))
+	}
+}
+
 func TestForgetThoughtDeletesMetadata(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "forget-meta.db")

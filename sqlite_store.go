@@ -377,6 +377,21 @@ func (s *SQLiteStore) Insert(ctx context.Context, content string, embedding []fl
 	}, nil
 }
 
+// InsertWithMetadata inserts a thought and attaches metadata entries in one operation.
+func (s *SQLiteStore) InsertWithMetadata(ctx context.Context, content string, embedding []float32, source string, instanceID, modelID int, metadata []ThoughtMetadataEntry) (*Thought, error) {
+	thought, err := s.Insert(ctx, content, embedding, source, instanceID, modelID)
+	if err != nil {
+		return nil, err
+	}
+	for _, m := range metadata {
+		if err := s.AddThoughtMetadata(ctx, thought.ID, m.Type, m.Value, instanceID); err != nil {
+			return nil, fmt.Errorf("attach metadata: %w", err)
+		}
+	}
+	thought.Metadata = metadata
+	return thought, nil
+}
+
 // List returns recent thoughts.
 func (s *SQLiteStore) List(ctx context.Context, limit, offset int) ([]Thought, error) {
 	rows, err := s.db.QueryContext(ctx,
