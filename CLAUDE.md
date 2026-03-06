@@ -107,14 +107,29 @@ No auth on any endpoint currently. Sync endpoints (`/api/sync`) are wide open. N
 - Encryption of bundles in transit (TLS) and at rest
 - Requires research to get right — don't rush this.
 
-### Chat integration ("bolt a brain on top")
+### Brain integration (three-tier design)
 
-The thought store is a storage/retrieval layer. A separate "brain" service would sit between chat platforms and the thought store, acting as an intermediary:
-- **Inbound channels**: Slack, WhatsApp, Discord, browser plugin, Android app
-- **Architecture**: Chat adapter → Brain service (LLM-powered) → Thought Store API
-- The brain interprets natural language commands, decides when to capture vs search vs respond
-- The thought store instance that faces chat services should have this brain layer; other instances just sync
-- The MCP server already provides the right interface — the brain could be an MCP client
+The thought store is a storage/retrieval layer. The "brain" (LLM-powered intelligence) lives in different places depending on the mode:
+
+| Mode | Brain? | Who's the brain? | Interface |
+|------|--------|-------------------|-----------|
+| `thought-store mcp` | No | The calling AI agent (Claude, Codex, Gemini) | stdio MCP |
+| `thought-store serve --enable-brain` | Yes, embedded | The thought-store itself (LLM extraction) | Web chat UI |
+| `thought-store serve --enable-brain --enable-slack ...` | Yes, embedded | The thought-store itself | Web + chat platforms |
+
+**Key insight:** In MCP mode, the calling agent IS the brain — it extracts metadata, decides what to capture, and pushes structured data via MCP tools. The store stays dumb. In brain mode, the store runs its own LLM extraction because the callers (web chat, Slack, WhatsApp) are humans typing plain text, not AI agents.
+
+This is essentially Nate's Open Brain pattern — extraction at capture time, in each ingestion path — but with a clear split between "agent as brain" (MCP) and "embedded brain" (serve with --enable-brain).
+
+**Inbound channels for brain mode**: Slack, WhatsApp, Discord, browser plugin, Android app
+- Chat adapters feed into the embedded brain, which extracts metadata and calls store methods directly
+- Multiple agents can share the same MCP server instance on one machine
+
+### MCP transport
+
+- **stdio**: Current transport for `thought-store mcp`. Correct for local agent use (subprocess model). Agents like Claude Code, Codex, etc. launch it as a subprocess.
+- **Streamable HTTP**: MCP spec (2025-03-26) defines JSON-RPC over HTTP with optional SSE. Could be exposed alongside REST API on `serve` (e.g., `/mcp` path) for remote MCP clients over Tailscale. Not yet implemented.
+- No urgency to move stdio→HTTP — they serve different use cases (local vs remote).
 
 ### Mobile (Android)
 
