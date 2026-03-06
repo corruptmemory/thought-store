@@ -121,9 +121,9 @@ func (cmd *ServeCmd) Execute(args []string) error {
 
 	ctx := context.Background()
 
-	store, err := NewStore(ctx, cfg.Database.URL)
+	store, err := NewSQLiteStore(cfg.Database.Path)
 	if err != nil {
-		return fmt.Errorf("connect to database: %w", err)
+		return fmt.Errorf("open database: %w", err)
 	}
 	defer store.Close()
 
@@ -131,8 +131,31 @@ func (cmd *ServeCmd) Execute(args []string) error {
 		return fmt.Errorf("migrate: %w", err)
 	}
 
+	hostname, _ := os.Hostname()
+	instanceID, err := store.EnsureInstance(ctx, hostname, "")
+	if err != nil {
+		return fmt.Errorf("ensure instance: %w", err)
+	}
+
+	modelID, err := store.EnsureModel(ctx, cfg.Ollama.Model, "", 1024)
+	if err != nil {
+		return fmt.Errorf("ensure model: %w", err)
+	}
+	if err := store.SetActiveModel(ctx, modelID); err != nil {
+		return fmt.Errorf("set active model: %w", err)
+	}
+
 	ollama := NewOllamaClient(cfg.Ollama.URL, cfg.Ollama.Model)
-	brain := NewLocalBrain(store, ollama)
+
+	vecIndex := NewVecIndex()
+	ids, vectors, err := store.LoadEmbeddings(ctx, modelID)
+	if err != nil {
+		return fmt.Errorf("load embeddings: %w", err)
+	}
+	vecIndex.Load(ids, vectors)
+	fmt.Fprintf(os.Stderr, "Loaded %d embeddings into memory\n", vecIndex.Len())
+
+	brain := NewLocalBrain(store, ollama, vecIndex, instanceID, modelID)
 	srv := NewServer(brain)
 
 	// mDNS advertising
@@ -236,9 +259,9 @@ func (cmd *MCPCmd) Execute(args []string) error {
 	} else {
 		ctx := context.Background()
 
-		store, err := NewStore(ctx, cfg.Database.URL)
+		store, err := NewSQLiteStore(cfg.Database.Path)
 		if err != nil {
-			return fmt.Errorf("connect to database: %w", err)
+			return fmt.Errorf("open database: %w", err)
 		}
 		defer store.Close()
 
@@ -246,8 +269,31 @@ func (cmd *MCPCmd) Execute(args []string) error {
 			return fmt.Errorf("migrate: %w", err)
 		}
 
+		hostname, _ := os.Hostname()
+		instanceID, err := store.EnsureInstance(ctx, hostname, "")
+		if err != nil {
+			return fmt.Errorf("ensure instance: %w", err)
+		}
+
+		modelID, err := store.EnsureModel(ctx, cfg.Ollama.Model, "", 1024)
+		if err != nil {
+			return fmt.Errorf("ensure model: %w", err)
+		}
+		if err := store.SetActiveModel(ctx, modelID); err != nil {
+			return fmt.Errorf("set active model: %w", err)
+		}
+
 		ollama := NewOllamaClient(cfg.Ollama.URL, cfg.Ollama.Model)
-		brain = NewLocalBrain(store, ollama)
+
+		vecIndex := NewVecIndex()
+		ids, vectors, err := store.LoadEmbeddings(ctx, modelID)
+		if err != nil {
+			return fmt.Errorf("load embeddings: %w", err)
+		}
+		vecIndex.Load(ids, vectors)
+		fmt.Fprintf(os.Stderr, "Loaded %d embeddings into memory\n", vecIndex.Len())
+
+		brain = NewLocalBrain(store, ollama, vecIndex, instanceID, modelID)
 	}
 
 	srv := newMCPServer(brain)
@@ -262,11 +308,26 @@ func (cmd *ReEmbedCmd) Execute(args []string) error {
 
 	ctx := context.Background()
 
-	store, err := NewStore(ctx, cfg.Database.URL)
+	store, err := NewSQLiteStore(cfg.Database.Path)
 	if err != nil {
-		return fmt.Errorf("connect to database: %w", err)
+		return fmt.Errorf("open database: %w", err)
 	}
 	defer store.Close()
+
+	if err := store.Migrate(ctx); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+
+	hostname, _ := os.Hostname()
+	_, err = store.EnsureInstance(ctx, hostname, "")
+	if err != nil {
+		return fmt.Errorf("ensure instance: %w", err)
+	}
+
+	modelID, err := store.EnsureModel(ctx, cfg.Ollama.Model, "", 1024)
+	if err != nil {
+		return fmt.Errorf("ensure model: %w", err)
+	}
 
 	ollama := NewOllamaClient(cfg.Ollama.URL, cfg.Ollama.Model)
 
@@ -321,7 +382,7 @@ func (cmd *ReEmbedCmd) Execute(args []string) error {
 		}
 
 		// Update database
-		if err := store.UpdateEmbeddings(ctx, ids, embeddings); err != nil {
+		if err := store.UpdateEmbeddings(ctx, ids, embeddings, modelID); err != nil {
 			return fmt.Errorf("update batch %d-%d: %w", i+1, end, err)
 		}
 
