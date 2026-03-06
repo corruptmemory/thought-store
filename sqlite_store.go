@@ -239,7 +239,7 @@ func (s *SQLiteStore) Insert(ctx context.Context, content string, embedding []fl
 // List returns recent thoughts.
 func (s *SQLiteStore) List(ctx context.Context, limit, offset int) ([]Thought, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT t.unique_id, t.content, src.name, t.created_at
+		`SELECT t.unique_id, t.content, src.name, t.state, t.created_at
 		 FROM thoughts t
 		 JOIN sources src ON src.id = t.source_id
 		 WHERE t.state = 0
@@ -253,10 +253,12 @@ func (s *SQLiteStore) List(ctx context.Context, limit, offset int) ([]Thought, e
 	var thoughts []Thought
 	for rows.Next() {
 		var t Thought
+		var state int
 		var createdAt string
-		if err := rows.Scan(&t.ID, &t.Content, &t.Source, &createdAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.Content, &t.Source, &state, &createdAt); err != nil {
 			return nil, fmt.Errorf("scan thought: %w", err)
 		}
+		t.State = ThoughtState(state)
 		t.CreatedAt, _ = time.Parse("2006-01-02T15:04:05.000Z", createdAt)
 		thoughts = append(thoughts, t)
 	}
@@ -417,7 +419,7 @@ func (s *SQLiteStore) GetByUniqueIDs(ctx context.Context, uids []string) ([]Thou
 	}
 
 	query := fmt.Sprintf(
-		`SELECT t.unique_id, t.content, src.name, t.created_at
+		`SELECT t.unique_id, t.content, src.name, t.state, t.created_at
 		 FROM thoughts t
 		 JOIN sources src ON src.id = t.source_id
 		 WHERE t.unique_id IN (%s)`,
@@ -432,10 +434,12 @@ func (s *SQLiteStore) GetByUniqueIDs(ctx context.Context, uids []string) ([]Thou
 	byUID := make(map[string]Thought)
 	for rows.Next() {
 		var t Thought
+		var state int
 		var createdAt string
-		if err := rows.Scan(&t.ID, &t.Content, &t.Source, &createdAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.Content, &t.Source, &state, &createdAt); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
+		t.State = ThoughtState(state)
 		t.CreatedAt, _ = time.Parse("2006-01-02T15:04:05.000Z", createdAt)
 		byUID[t.ID] = t
 	}

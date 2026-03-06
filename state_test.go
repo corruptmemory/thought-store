@@ -315,6 +315,30 @@ func TestImportThoughtWithState(t *testing.T) {
 	}
 }
 
+func TestListPopulatesStateField(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "populate-state.db")
+	store, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	store.Migrate(ctx)
+	instID, _ := store.EnsureInstance(ctx, "test", "")
+	modelID, _ := store.EnsureModel(ctx, "test-model", "", 4)
+	store.SetActiveModel(ctx, modelID)
+
+	store.Insert(ctx, "active thought", []float32{0.1, 0.2, 0.3, 0.4}, "cli", instID, modelID)
+
+	thoughts, _ := store.List(ctx, 10, 0)
+	if len(thoughts) != 1 {
+		t.Fatal("expected 1 thought")
+	}
+	if thoughts[0].State != StateActive {
+		t.Fatalf("expected State=StateActive, got %v", thoughts[0].State)
+	}
+}
+
 func TestThoughtStateUnmarshalText(t *testing.T) {
 	tests := []struct {
 		text string
