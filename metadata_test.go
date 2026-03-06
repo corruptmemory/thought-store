@@ -123,6 +123,63 @@ func TestAddThoughtMetadata(t *testing.T) {
 	}
 }
 
+func TestLoadThoughtMetadata(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "load-meta.db")
+	store, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	store.Migrate(ctx)
+	instID, _ := store.EnsureInstance(ctx, "test", "")
+	modelID, _ := store.EnsureModel(ctx, "test-model", "", 4)
+	store.SetActiveModel(ctx, modelID)
+
+	t1, _ := store.Insert(ctx, "met Sarah", []float32{0.1, 0.2, 0.3, 0.4}, "cli", instID, modelID)
+	t2, _ := store.Insert(ctx, "no metadata", []float32{0.5, 0.6, 0.7, 0.8}, "cli", instID, modelID)
+
+	store.AddThoughtMetadata(ctx, t1.ID, MetadataPerson, "Sarah", instID)
+	store.AddThoughtMetadata(ctx, t1.ID, MetadataTag, "meeting", instID)
+
+	meta, err := store.LoadThoughtMetadata(ctx, []string{t1.ID, t2.ID})
+	if err != nil {
+		t.Fatalf("LoadThoughtMetadata: %v", err)
+	}
+
+	entries := meta[t1.ID]
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries for t1, got %d", len(entries))
+	}
+
+	// t2 should have no metadata
+	if len(meta[t2.ID]) != 0 {
+		t.Fatalf("expected 0 entries for t2, got %d", len(meta[t2.ID]))
+	}
+}
+
+func TestLoadThoughtMetadataEmpty(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "load-meta-empty.db")
+	store, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	store.Migrate(ctx)
+
+	meta, err := store.LoadThoughtMetadata(ctx, nil)
+	if err != nil {
+		t.Fatalf("LoadThoughtMetadata nil: %v", err)
+	}
+	if meta == nil {
+		t.Fatal("expected non-nil map")
+	}
+	if len(meta) != 0 {
+		t.Fatalf("expected empty map, got %d entries", len(meta))
+	}
+}
+
 func TestMigrateCreatesMetadataTables(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "migrate-meta.db")

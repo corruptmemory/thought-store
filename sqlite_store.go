@@ -243,6 +243,50 @@ func (s *SQLiteStore) AddThoughtMetadata(ctx context.Context, thoughtUID string,
 	return nil
 }
 
+// LoadThoughtMetadata returns metadata entries grouped by thought unique_id.
+func (s *SQLiteStore) LoadThoughtMetadata(ctx context.Context, thoughtUIDs []string) (map[string][]ThoughtMetadataEntry, error) {
+	result := make(map[string][]ThoughtMetadataEntry)
+	if len(thoughtUIDs) == 0 {
+		return result, nil
+	}
+
+	placeholders := make([]string, len(thoughtUIDs))
+	args := make([]any, len(thoughtUIDs))
+	for i, uid := range thoughtUIDs {
+		placeholders[i] = "?"
+		args[i] = uid
+	}
+
+	query := fmt.Sprintf(
+		`SELECT t.unique_id, m.metadata_type, m.value
+		 FROM thought_metadata tm
+		 JOIN thoughts t ON t.id = tm.thought_id
+		 JOIN metadata m ON m.id = tm.metadata_id
+		 WHERE t.unique_id IN (%s)
+		 ORDER BY t.unique_id, m.metadata_type, m.value`,
+		strings.Join(placeholders, ","))
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("load thought metadata: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var thoughtUID string
+		var mt int
+		var value string
+		if err := rows.Scan(&thoughtUID, &mt, &value); err != nil {
+			return nil, fmt.Errorf("scan metadata: %w", err)
+		}
+		result[thoughtUID] = append(result[thoughtUID], ThoughtMetadataEntry{
+			Type:  MetadataType(mt),
+			Value: value,
+		})
+	}
+	return result, rows.Err()
+}
+
 // Insert stores a thought with its embedding.
 func (s *SQLiteStore) Insert(ctx context.Context, content string, embedding []float32, source string, instanceID, modelID int) (*Thought, error) {
 	uid := uuid.New().String()
