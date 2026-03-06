@@ -125,6 +125,29 @@ func TestSQLiteEncodeDecodeVector(t *testing.T) {
 	}
 }
 
+func TestSQLiteCheckpoint(t *testing.T) {
+	store := newTestSQLiteStore(t)
+	ctx := context.Background()
+
+	instanceID, err := store.EnsureInstance(ctx, "test-machine", "")
+	if err != nil {
+		t.Fatalf("EnsureInstance: %v", err)
+	}
+	modelID, err := store.EnsureModel(ctx, "test-model", "", 4)
+	if err != nil {
+		t.Fatalf("EnsureModel: %v", err)
+	}
+
+	_, err = store.Insert(ctx, "checkpoint test", []float32{0.1, 0.2, 0.3, 0.4}, "cli", instanceID, modelID)
+	if err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+
+	if err := store.Checkpoint(ctx); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+}
+
 func TestSQLiteEnsureInstanceIdempotent(t *testing.T) {
 	store := newTestSQLiteStore(t)
 	ctx := context.Background()

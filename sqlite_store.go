@@ -43,6 +43,13 @@ func (s *SQLiteStore) Close() {
 	s.db.Close()
 }
 
+// Checkpoint forces a WAL checkpoint, folding the WAL into the main DB file.
+// Call before exporting the database for sync.
+func (s *SQLiteStore) Checkpoint(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`)
+	return err
+}
+
 func (s *SQLiteStore) Migrate(ctx context.Context) error {
 	statements := []string{
 		`CREATE TABLE IF NOT EXISTS sources (
