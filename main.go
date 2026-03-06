@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	flags "github.com/jessevdk/go-flags"
@@ -91,6 +92,21 @@ type ServiceLogsCmd struct {
 	System bool `long:"system" description:"Show system service logs"`
 }
 
+type SyncCmd struct {
+	Pull SyncPullCmd `command:"pull" description:"Pull bundle from a peer and merge locally"`
+	Push SyncPushCmd `command:"push" description:"Push local bundle to a peer"`
+}
+
+type SyncPullCmd struct {
+	Config string `long:"config" default:"thought-store.toml" description:"Path to config file"`
+	From   string `long:"from" required:"true" description:"URL of the peer to pull from"`
+}
+
+type SyncPushCmd struct {
+	Config string `long:"config" default:"thought-store.toml" description:"Path to config file"`
+	To     string `long:"to" required:"true" description:"URL of the peer to push to"`
+}
+
 var opts struct {
 	Serve   ServeCmd   `command:"serve" description:"Start the HTTP server"`
 	Capture CaptureCmd `command:"capture" description:"Capture a thought"`
@@ -100,6 +116,7 @@ var opts struct {
 	Scan    ScanCmd    `command:"scan" description:"Scan for thought-store instances on the local network"`
 	Service ServiceCmd `command:"service" description:"Manage thought-store as a system service"`
 	Setup SetupCmd `command:"setup" description:"Interactive guided setup for new installations"`
+	Sync  SyncCmd  `command:"sync" description:"Sync thoughts with a peer"`
 }
 
 func main() {
@@ -539,4 +556,66 @@ func (cmd *ServiceStatusCmd) Execute(args []string) error {
 func (cmd *ServiceLogsCmd) Execute(args []string) error {
 	mgr := NewServiceManager(serviceName, cmd.System)
 	return mgr.Logs(cmd.Follow, cmd.Lines)
+}
+
+func (cmd *SyncPullCmd) Execute(args []string) error {
+	cfg, err := LoadConfig(cmd.Config)
+	if err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+
+	store, err := NewSQLiteStore(cfg.Database.Path)
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+	defer store.Close()
+
+	if err := store.Migrate(ctx); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+
+	hostname, _ := os.Hostname()
+	instanceID, err := store.EnsureInstance(ctx, hostname, "")
+	if err != nil {
+		return fmt.Errorf("ensure instance: %w", err)
+	}
+
+	modelID, err := store.EnsureModel(ctx, cfg.Ollama.Model, "", 1024)
+	if err != nil {
+		return fmt.Errorf("ensure model: %w", err)
+	}
+
+	myUID, err := store.InstanceUID(ctx, instanceID)
+	if err != nil {
+		return fmt.Errorf("instance uid: %w", err)
+	}
+
+	peerURL := strings.TrimRight(cmd.From, "/") + "/api/sync"
+	fmt.Fprintf(os.Stderr, "Pulling from %s...\n", peerURL)
+
+	resp, err := http.Get(peerURL)
+	if err != nil {
+		return fmt.Errorf("fetch bundle: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("peer returned %d: %s", resp.StatusCode, body)
+	}
+
+	result, err := ImportBundle(ctx, store, myUID, modelID, resp.Body)
+	if err != nil {
+		return fmt.Errorf("import: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "Imported: %d new instances, %d new thoughts, %d skipped, %d queued for re-embed\n",
+		result.NewInstances, result.NewThoughts, result.Skipped, result.ReembedQueued)
+	return nil
+}
+
+func (cmd *SyncPushCmd) Execute(args []string) error {
+	return fmt.Errorf("not implemented yet")
 }
