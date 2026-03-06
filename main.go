@@ -158,6 +158,12 @@ func (cmd *ServeCmd) Execute(args []string) error {
 	brain := NewLocalBrain(store, ollama, vecIndex, instanceID, modelID)
 	srv := NewServer(brain)
 
+	instanceUID, err := store.InstanceUID(ctx, instanceID)
+	if err != nil {
+		return fmt.Errorf("instance uid: %w", err)
+	}
+	srv.SetSyncState(store, cfg.Database.Path, instanceUID, modelID, vecIndex)
+
 	// mDNS advertising
 	if cfg.MDNS.Name != "" {
 		port, err := ParsePort(cfg.Server.Addr)

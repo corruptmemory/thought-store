@@ -2,7 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
@@ -11,8 +13,13 @@ import (
 )
 
 type Server struct {
-	router *chi.Mux
-	brain  ThoughtStore
+	router      *chi.Mux
+	brain       ThoughtStore
+	store       *SQLiteStore // for sync operations
+	dbPath      string       // for sync export
+	instanceUID string       // for sync import
+	modelID     int          // for sync import
+	vecIndex    *VecIndex    // for updating after sync import
 }
 
 func NewServer(brain ThoughtStore) *Server {
@@ -33,6 +40,10 @@ func NewServer(brain ThoughtStore) *Server {
 	s.router.Get("/api/stats", s.handleStats)
 	s.router.Get("/api/diagnostics", s.handleDiagnostics)
 
+	// Sync routes
+	s.router.Get("/api/sync", s.handleSyncExport)
+	s.router.Post("/api/sync", s.handleSyncImport)
+
 	// Static files
 	fs := http.FileServer(http.Dir("static"))
 	s.router.Handle("/static/*", http.StripPrefix("/static/", fs))
@@ -42,6 +53,15 @@ func NewServer(brain ThoughtStore) *Server {
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.router.ServeHTTP(w, r)
+}
+
+// SetSyncState configures the server for sync operations.
+func (s *Server) SetSyncState(store *SQLiteStore, dbPath, instanceUID string, modelID int, vecIndex *VecIndex) {
+	s.store = store
+	s.dbPath = dbPath
+	s.instanceUID = instanceUID
+	s.modelID = modelID
+	s.vecIndex = vecIndex
 }
 
 func isHTMX(r *http.Request) bool {
@@ -191,4 +211,34 @@ func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(report)
+}
+
+func (s *Server) handleSyncExport(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		http.Error(w, "sync not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", "attachment; filename=brain.tar.zst")
+
+	if err := ExportBundle(r.Context(), s.store, s.dbPath, w); err != nil {
+		fmt.Fprintf(os.Stderr, "sync export error: %v\n", err)
+	}
+}
+
+func (s *Server) handleSyncImport(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		http.Error(w, "sync not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	result, err := ImportBundle(r.Context(), s.store, s.instanceUID, s.modelID, r.Body)
+	if err != nil {
+		http.Error(w, "import failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
 }
