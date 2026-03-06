@@ -400,6 +400,65 @@ func TestSyncPreservesRefinedState(t *testing.T) {
 	}
 }
 
+func TestSyncImportsRefinedThoughts(t *testing.T) {
+	ctx := context.Background()
+
+	storeA, dbPathA, instA, modelA := newTestStoreAt(t, "machine-A")
+	storeB, _, instB, modelB := newTestStoreAt(t, "machine-B")
+
+	// A creates thoughts and refines them
+	t1, _ := storeA.Insert(ctx, "thought 1", []float32{0.1, 0.2, 0.3, 0.4}, "cli", instA, modelA)
+	t2, _ := storeA.Insert(ctx, "thought 2", []float32{0.5, 0.6, 0.7, 0.8}, "cli", instA, modelA)
+	summary, _ := storeA.RefineThoughts(ctx, []string{t1.ID, t2.ID}, "summary of 1 and 2",
+		[]float32{0.3, 0.4, 0.5, 0.6}, nil, "cli", instA, modelA)
+
+	// Verify sources are refined on A
+	sources, _ := storeA.GetByUniqueIDs(ctx, []string{t1.ID, t2.ID})
+	for _, s := range sources {
+		if s.State != StateRefined {
+			t.Fatalf("source %s should be refined on A, got %v", s.ID, s.State)
+		}
+	}
+
+	// B pulls from A
+	uidB, _ := storeB.InstanceUID(ctx, instB)
+	bundle := exportToFile(t, ctx, storeA, dbPathA)
+	result := importFromFile(t, ctx, storeB, uidB, modelB, bundle)
+	if result.NewThoughts != 3 { // 2 sources + 1 summary
+		t.Fatalf("expected 3 new thoughts, got %d", result.NewThoughts)
+	}
+
+	// Sources should be refined on B
+	sourcesB, _ := storeB.GetByUniqueIDs(ctx, []string{t1.ID, t2.ID})
+	for _, s := range sourcesB {
+		if s.State != StateRefined {
+			t.Fatalf("source %s should be refined on B, got %v", s.ID, s.State)
+		}
+	}
+
+	// Summary should be active on B
+	summaryB, _ := storeB.GetByUniqueIDs(ctx, []string{summary.ID})
+	if summaryB[0].State != StateActive {
+		t.Fatalf("summary should be active on B, got %v", summaryB[0].State)
+	}
+
+	// DAG edges should exist on B
+	var edgeCount int
+	storeB.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM refined_thoughts`).Scan(&edgeCount)
+	if edgeCount != 2 {
+		t.Fatalf("expected 2 DAG edges on B, got %d", edgeCount)
+	}
+
+	// Import again — should be idempotent
+	bundle2 := exportToFile(t, ctx, storeA, dbPathA)
+	importFromFile(t, ctx, storeB, uidB, modelB, bundle2)
+
+	storeB.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM refined_thoughts`).Scan(&edgeCount)
+	if edgeCount != 2 {
+		t.Fatalf("expected 2 DAG edges after re-import, got %d", edgeCount)
+	}
+}
+
 func TestSyncImportsMetadata(t *testing.T) {
 	ctx := context.Background()
 
