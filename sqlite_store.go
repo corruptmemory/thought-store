@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -387,6 +388,52 @@ func (s *SQLiteStore) Diagnostics(ctx context.Context) *SQLiteDiag {
 	}
 
 	return diag
+}
+
+// GetByUniqueIDs fetches thoughts by their unique_ids, preserving order.
+func (s *SQLiteStore) GetByUniqueIDs(ctx context.Context, uids []string) ([]Thought, error) {
+	if len(uids) == 0 {
+		return nil, nil
+	}
+
+	placeholders := make([]string, len(uids))
+	args := make([]any, len(uids))
+	for i, uid := range uids {
+		placeholders[i] = "?"
+		args[i] = uid
+	}
+
+	query := fmt.Sprintf(
+		`SELECT t.unique_id, t.content, src.name, t.created_at
+		 FROM thoughts t
+		 JOIN sources src ON src.id = t.source_id
+		 WHERE t.unique_id IN (%s)`,
+		strings.Join(placeholders, ","))
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("get by uids: %w", err)
+	}
+	defer rows.Close()
+
+	byUID := make(map[string]Thought)
+	for rows.Next() {
+		var t Thought
+		var createdAt string
+		if err := rows.Scan(&t.ID, &t.Content, &t.Source, &createdAt); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		t.CreatedAt, _ = time.Parse("2006-01-02T15:04:05.000Z", createdAt)
+		byUID[t.ID] = t
+	}
+
+	result := make([]Thought, 0, len(uids))
+	for _, uid := range uids {
+		if t, ok := byUID[uid]; ok {
+			result = append(result, t)
+		}
+	}
+	return result, rows.Err()
 }
 
 // encodeVector converts []float32 to raw bytes for BLOB storage.
