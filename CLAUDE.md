@@ -14,7 +14,7 @@ Inspired by Nate Jones's [Open Brain](https://promptkit.natebjones.com/20260224_
 
 | | Nate's Open Brain | This project |
 |---|---|---|
-| **Hosting** | Cloud (Supabase, OpenRouter) | Self-hosted (local Postgres, Ollama) |
+| **Hosting** | Cloud (Supabase, OpenRouter) | Self-hosted (local SQLite, Ollama) |
 | **Embeddings** | OpenRouter text-embedding-3-small (1536d) | Local Ollama mxbai-embed-large (1024d) |
 | **Metadata** | LLM-extracted (type, people, topics, actions) | Source tag only (provenance, not classification) |
 | **Capture** | Slack webhooks | Web UI, CLI, JSON API, MCP |
@@ -23,7 +23,7 @@ Inspired by Nate Jones's [Open Brain](https://promptkit.natebjones.com/20260224_
 | **Cost** | ~$0.10-0.30/mo API costs | $0 (runs entirely on local hardware) |
 | **Network** | Requires internet | Works offline; Tailscale for remote access |
 
-**Shared DNA:** Both use Postgres+pgvector for storage, cosine similarity for retrieval, MCP for AI client integration, and the same 4-tool interface (capture, search, list, stats). Both treat semantic search as primary and metadata as secondary. Nate's Prompt 1 "seed" concept — harvesting what an AI already knows about you into the store — was used directly to bootstrap this thought store.
+**Shared DNA:** Both use cosine similarity for retrieval, MCP for AI client integration, and the same 4-tool interface (capture, search, list, stats). Both treat semantic search as primary and metadata as secondary. Nate's Prompt 1 "seed" concept — harvesting what an AI already knows about you into the store — was used directly to bootstrap this thought store.
 
 ## Build
 
@@ -47,13 +47,12 @@ mcp.go           MCP server setup (5 tools: capture, search, list, stats, diagno
 diagnostics.go   Diagnostic report types, BrainMode enum, NetworkType classifier
 sqlite_store.go   SQLite store (insert, list, search, embeddings)
 vecindex.go      SIMD-accelerated in-memory vector index (viterin/vek)
-migrate_pg.go    Postgres-to-SQLite migration tool
 ollama.go        Ollama embedding client (/api/embeddings endpoint)
 mdns.go          mDNS service advertisement and discovery (hashicorp/mdns)
 service.go       Platform-agnostic ServiceManager interface and types
 service_linux.go systemd implementation (install, uninstall, enable, disable, status, logs)
 service_unsupported.go  Stub for non-Linux platforms
-setup.go         Interactive guided setup wizard (Postgres, Ollama, config generation)
+setup.go         Interactive guided setup wizard (SQLite, Ollama, config generation)
 setup_prompts.go huh/lipgloss prompt wrappers for setup
 templates/       Templ components (layout, home, thought card)
 static/          CSS (tokens.css, app.css) and vendored htmx
@@ -67,10 +66,10 @@ static/          CSS (tokens.css, app.css) and vendored htmx
 - **ThoughtStore interface**: Both HTTP server and MCP server consume the same interface. LocalBrain talks directly to SQLite+Ollama; RemoteBrain talks HTTP with a URL fallback chain.
 - **In-memory vector index**: On startup, all embeddings for the active model are loaded into memory. Search uses SIMD-accelerated cosine similarity via viterin/vek. Capture appends to the index.
 - **MCP subcommand**: `./thought-store mcp` speaks stdio MCP for Claude Code. `--remote` flag switches from LocalBrain to RemoteBrain.
-- **Diagnostics**: `Diagnostics(ctx)` on the interface returns a structured report. LocalBrain queries Postgres and Ollama directly; RemoteBrain fetches `/api/diagnostics` and nests the server's report. `BrainMode` is a fake enum with `String()` and `MarshalText()`.
+- **Diagnostics**: `Diagnostics(ctx)` on the interface returns a structured report. LocalBrain queries SQLite and Ollama directly; RemoteBrain fetches `/api/diagnostics` and nests the server's report. `BrainMode` is a fake enum with `String()` and `MarshalText()`.
 - **Re-embed**: `./thought-store re-embed` re-vectorizes all thoughts using the current Ollama model. Dry-run by default; `--apply` to execute. Uses Ollama's `/api/embed` batch endpoint (50 texts/call by default, tunable via `--batch-size`).
 - **mDNS discovery**: `[mdns].name` enables both advertising (on `serve`) and discovery (on `mcp --remote`). `./thought-store scan` finds all instances and writes the selection to config. Uses `hashicorp/mdns` (pure Go, cross-platform).
-- **Setup wizard**: `./thought-store setup` interactively checks/installs Postgres and Ollama, provisions the database (user, DB, pgvector), and generates `thought-store.toml`. Uses `charmbracelet/huh` for forms and `lipgloss` for styled output. Detects package managers (paru/yay/pacman/brew). Supports local and remote Postgres.
+- **Setup wizard**: `./thought-store setup` interactively checks/installs Ollama, prompts for SQLite path, and generates `thought-store.toml`. Uses `charmbracelet/huh` for forms and `lipgloss` for styled output. Detects package managers (paru/yay/pacman/brew).
 - **Service management**: `./thought-store service` subcommand with install/uninstall/enable/disable/status/logs. Platform-agnostic `ServiceManager` interface with build-tagged implementations: systemd on Linux, stub on other platforms. User services by default, `--system` for system-level. Reusable pattern for future projects.
 
 ## Tests
@@ -78,7 +77,7 @@ static/          CSS (tokens.css, app.css) and vendored htmx
 Integration tests against real Ollama (no mocks). SQLite tests use t.TempDir() for isolation. Tests skip gracefully if Ollama is unavailable.
 
 - `ollama_test.go` — embedding dimension and non-zero check
-- `store_test.go` — insert/list/search round-trip
+- `sqlite_store_test.go` — SQLite insert/list/search/embeddings round-trip
 - `remote_test.go` — RemoteBrain round-trip and URL fallback chain
 - `e2e_test.go` — full HTTP pipeline on random port, including diagnostics endpoint
 - `reembed_test.go` — batch embed, update embeddings, and post-re-embed search verification
@@ -87,13 +86,10 @@ Integration tests against real Ollama (no mocks). SQLite tests use t.TempDir() f
 - `service_linux_test.go` — unit file path generation, systemctl show output parsing
 - `setup_test.go` — package manager detection, install command generation, config file checks
 
-## Future direction: SQLite + distributed sync
+## Future direction: distributed sync
 
-The project is moving from Postgres to SQLite (`modernc.org/sqlite`, pure Go) to enable a distributed, sync-capable architecture. See `docs/plans/2026-03-05-sqlite-migration-design.md` for the full design.
+See `docs/plans/2026-03-05-sqlite-migration-design.md` for the full design.
 
-- **SQLite over Postgres**: eliminates server dependency, enables single-file portable brains, simplifies setup to zero infrastructure. WAL mode for concurrent reads, single-writer serialization.
-- **In-process vector search**: `viterin/vek` (SIMD-accelerated, pure Go) for brute-force cosine similarity. In-memory index rebuilt from SQLite on startup. At 100K×1024d with AVX2, search is single-digit milliseconds.
-- **Schema redesign**: integer PKs (human-readable) + UUIDs (sync identity). Separate tables for `sources` (capture mechanism: web/cli/mcp), `instances` (provenance: which machine), `models` (embedding model metadata), `embeddings` (decoupled from thoughts, supports model transitions), `active_model` (single-row, FK-constrained).
 - **Sync bundles** (future): compressed SQLite DB + content-addressed asset blobs. Import by `unique_id`, preserve original source and instance provenance. Sync is transparent — not a capture mechanism, just transport.
 - **Re-vectorize on import** (future): if local model differs from source, imported thoughts get re-embedded.
 - **Rich media** (future): supplemental files, images, data sets, code snippets, audio, video, calendar data — stored as content-addressed blobs alongside the SQLite DB.
@@ -112,7 +108,6 @@ The project is moving from Postgres to SQLite (`modernc.org/sqlite`, pure Go) to
 - `modernc.org/sqlite` — pure Go SQLite driver
 - `github.com/viterin/vek` — SIMD-accelerated vector operations
 - `github.com/google/uuid` — UUID generation
-- `github.com/jackc/pgx/v5`, `github.com/pgvector/pgvector-go` — used by migrate-from-postgres tool
 - `github.com/mark3labs/mcp-go` — MCP server (stdio transport)
 - `github.com/hashicorp/mdns` — mDNS service advertisement and discovery
 - `github.com/charmbracelet/huh` — interactive terminal forms

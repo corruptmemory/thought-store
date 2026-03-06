@@ -25,7 +25,6 @@ type ServerConfig struct {
 
 type DatabaseConfig struct {
 	Path string `toml:"path"` // SQLite database file path
-	URL  string `toml:"url"`  // Legacy Postgres URL (for migration only)
 }
 
 type OllamaConfig struct {

@@ -21,7 +21,7 @@ Single Go binary. No npm, no node, no containers required.
 - **SQLite** (via modernc.org/sqlite, pure Go, no CGO)
 - **In-memory SIMD vector search** (viterin/vek)
 - **Ollama** running locally with mxbai-embed-large
-- **CLI** via go-flags with `serve`, `capture`, `search`, `mcp`, `re-embed`, `scan`, `service`, `setup`, `migrate-from-postgres` subcommands
+- **CLI** via go-flags with `serve`, `capture`, `search`, `mcp`, `re-embed`, `scan`, `service`, `setup` subcommands
 - **MCP** server for native Claude Code integration (stdio transport)
 
 ## Prerequisites
@@ -188,7 +188,7 @@ name = "jim-brain"
 
 The thought store includes an MCP server for native Claude Code integration.
 
-### Local mode (same machine as Postgres/Ollama)
+### Local mode (same machine as Ollama)
 
 Register with Claude Code by adding to your project's `.mcp.json`:
 
@@ -229,18 +229,6 @@ Then register with the `--remote` flag:
 ```
 
 The remote client tries each URL in order. Put localhost first for zero-latency when on the same machine, Tailscale IP last as the universal fallback.
-
-## Migrating from Postgres
-
-If you have an existing Postgres-based thought store:
-
-```bash
-./thought-store migrate-from-postgres \
-  --postgres-url "postgres://thoughtstore:thoughtstore@localhost/thoughtstore?sslmode=disable" \
-  --config thought-store.toml
-```
-
-This reads all thoughts and embeddings from Postgres and writes them to the SQLite database. The Postgres database is not modified.
 
 ## Design principles
 
