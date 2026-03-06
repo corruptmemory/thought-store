@@ -523,6 +523,39 @@ func (s *SQLiteStore) ImportThought(ctx context.Context, uniqueID, content, sour
 	return tx.Commit()
 }
 
+// ForgetThought sets a thought to the forgotten state: wipes content, deletes embeddings.
+// The row is preserved as a tombstone (unique_id intact for sync propagation).
+// Idempotent — forgetting an already-forgotten thought is a no-op.
+func (s *SQLiteStore) ForgetThought(ctx context.Context, uniqueID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	var thoughtID int
+	err = tx.QueryRowContext(ctx,
+		`SELECT id FROM thoughts WHERE unique_id = ?`, uniqueID).Scan(&thoughtID)
+	if err != nil {
+		return fmt.Errorf("find thought %s: %w", uniqueID, err)
+	}
+
+	_, err = tx.ExecContext(ctx,
+		`UPDATE thoughts SET state = ?, content = '' WHERE id = ?`,
+		StateForgotten, thoughtID)
+	if err != nil {
+		return fmt.Errorf("update thought state: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx,
+		`DELETE FROM embeddings WHERE thought_id = ?`, thoughtID)
+	if err != nil {
+		return fmt.Errorf("delete embeddings: %w", err)
+	}
+
+	return tx.Commit()
+}
+
 // encodeVector converts []float32 to raw bytes for BLOB storage.
 func encodeVector(v []float32) []byte {
 	buf := make([]byte, len(v)*4)

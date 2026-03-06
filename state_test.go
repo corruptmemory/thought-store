@@ -233,6 +233,62 @@ func TestLoadEmbeddingsSkipsForgotten(t *testing.T) {
 	}
 }
 
+func TestForgetThought(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "forget.db")
+	store, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	store.Migrate(ctx)
+	instID, _ := store.EnsureInstance(ctx, "test", "")
+	modelID, _ := store.EnsureModel(ctx, "test-model", "", 4)
+	store.SetActiveModel(ctx, modelID)
+
+	thought, _ := store.Insert(ctx, "remember this", []float32{0.1, 0.2, 0.3, 0.4}, "cli", instID, modelID)
+
+	// Verify embedding exists
+	ids, _, _ := store.LoadEmbeddings(ctx, modelID)
+	if len(ids) != 1 {
+		t.Fatalf("expected 1 embedding before forget, got %d", len(ids))
+	}
+
+	if err := store.ForgetThought(ctx, thought.ID); err != nil {
+		t.Fatalf("ForgetThought: %v", err)
+	}
+
+	// Content should be empty
+	var content string
+	var state int
+	store.db.QueryRowContext(ctx,
+		`SELECT content, state FROM thoughts WHERE unique_id = ?`, thought.ID).Scan(&content, &state)
+	if content != "" {
+		t.Fatalf("expected empty content, got %q", content)
+	}
+	if state != int(StateForgotten) {
+		t.Fatalf("expected state=%d (forgotten), got %d", StateForgotten, state)
+	}
+
+	// Embedding should be deleted (LoadEmbeddings filters by state, so also check directly)
+	var embCount int
+	store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM embeddings`).Scan(&embCount)
+	if embCount != 0 {
+		t.Fatalf("expected 0 embeddings after forget, got %d", embCount)
+	}
+
+	// Should not appear in List
+	thoughts, _ := store.List(ctx, 10, 0)
+	if len(thoughts) != 0 {
+		t.Fatalf("expected 0 thoughts in list, got %d", len(thoughts))
+	}
+
+	// Forget again — idempotent
+	if err := store.ForgetThought(ctx, thought.ID); err != nil {
+		t.Fatalf("ForgetThought second call: %v", err)
+	}
+}
+
 func TestThoughtStateUnmarshalText(t *testing.T) {
 	tests := []struct {
 		text string
