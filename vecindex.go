@@ -78,6 +78,23 @@ func (idx *VecIndex) Search(query []float32, limit int) []VecSearchResult {
 	return out
 }
 
+// Remove deletes an entry by ID. No-op if not found.
+func (idx *VecIndex) Remove(id string) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	for i, existing := range idx.ids {
+		if existing == id {
+			last := len(idx.ids) - 1
+			idx.ids[i] = idx.ids[last]
+			idx.vectors[i] = idx.vectors[last]
+			idx.ids = idx.ids[:last]
+			idx.vectors = idx.vectors[:last]
+			return
+		}
+	}
+}
+
 // Len returns the number of vectors in the index.
 func (idx *VecIndex) Len() int {
 	idx.mu.RLock()
