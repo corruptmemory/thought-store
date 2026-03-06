@@ -617,5 +617,62 @@ func (cmd *SyncPullCmd) Execute(args []string) error {
 }
 
 func (cmd *SyncPushCmd) Execute(args []string) error {
-	return fmt.Errorf("not implemented yet")
+	cfg, err := LoadConfig(cmd.Config)
+	if err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+
+	store, err := NewSQLiteStore(cfg.Database.Path)
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+	defer store.Close()
+
+	if err := store.Migrate(ctx); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+
+	// Create bundle in temp file
+	tmpFile, err := os.CreateTemp("", "sync-push-*.tar.zst")
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	defer os.Remove(tmpFile.Name())
+	defer tmpFile.Close()
+
+	fmt.Fprintf(os.Stderr, "Creating bundle...\n")
+	if err := ExportBundle(ctx, store, cfg.Database.Path, tmpFile); err != nil {
+		return fmt.Errorf("export: %w", err)
+	}
+	tmpFile.Close()
+
+	// Upload to peer
+	peerURL := strings.TrimRight(cmd.To, "/") + "/api/sync"
+	fmt.Fprintf(os.Stderr, "Pushing to %s...\n", peerURL)
+
+	bundleFile, err := os.Open(tmpFile.Name())
+	if err != nil {
+		return fmt.Errorf("open bundle: %w", err)
+	}
+	defer bundleFile.Close()
+
+	resp, err := http.Post(peerURL, "application/octet-stream", bundleFile)
+	if err != nil {
+		return fmt.Errorf("push bundle: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("peer returned %d: %s", resp.StatusCode, body)
+	}
+
+	var result ImportResult
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	fmt.Fprintf(os.Stderr, "Peer imported: %d new instances, %d new thoughts, %d skipped, %d queued for re-embed\n",
+		result.NewInstances, result.NewThoughts, result.Skipped, result.ReembedQueued)
+	return nil
 }
