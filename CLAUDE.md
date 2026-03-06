@@ -124,9 +124,26 @@ Need to figure out how to get thoughts in/out from an Android phone:
 
 Supplemental files, images, data sets, code snippets, audio, video, calendar data — stored as content-addressed blobs alongside the SQLite DB. The sync bundle tarball already reserves `assets/` for this.
 
-### Thought coalescing (future, breaks CRDT)
+### Thought coalescing and suppression (future — CRDT-safe)
 
-Ideas about merging/refining related thoughts into synthesized entries. This would break the current append-only CRDT property (thoughts are immutable, identified by UUID). Needs careful design if pursued — possibly a separate "synthesis" layer that doesn't mutate the original thoughts.
+**Core requirement:** thoughts must be revisable.
+
+**Coalescing:** Many small thoughts roll up into a summary thought. The summary is itself a regular thought (same table, same UUID). This nesting is arbitrarily deep — a DAG, not a tree.
+
+New table `coalesced_thoughts`:
+- `source_thought_id`, `source_thought_unique_id` (the contributing thought)
+- `target_thought_id`, `target_thought_unique_id` (the summary thought)
+- Both unique_id columns needed for sync
+
+**Suppression:** Soft-delete for "what was I thinking?" moments. New table `suppressed_thoughts` — a thought exists but is hidden from search and display.
+
+**CRDT property is preserved:** No thought is ever mutated or deleted. Coalescing adds new thoughts + new edge rows. Suppression adds rows. All append-only, all sync naturally via UUID dedup. Two instances that independently coalesce the same sources produce different summaries (different UUIDs) — after sync, both exist, both valid.
+
+**Search implications:** An "active" thought is one that is (a) not a source in `coalesced_thoughts` (has been rolled up) and (b) not in `suppressed_thoughts`. Search should prefer active thoughts. The VecIndex would need to hold only active thoughts, meaning coalescing/suppressing must update the index (remove rolled-up/suppressed, add new summary).
+
+**Conflict model:** Independent coalescing on two instances is not a conflict — it's two valid perspectives. After sync you might have two different summaries of the same source thoughts. A "brain" layer could reconcile these, but the store layer doesn't need to.
+
+**Open questions:** efficient SQL for "most coalesced" retrieval, VecIndex filtering, UI for exploring the DAG.
 
 ### Memory optimization (future)
 
