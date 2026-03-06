@@ -12,6 +12,7 @@ Nate's Open Brain runs on cloud free tiers (Supabase + OpenRouter + Slack). This
 - **Embed** each thought into a 1024-dimensional vector via local Ollama (mxbai-embed-large)
 - **Store** text + vector in SQLite
 - **Search** by meaning using cosine similarity — "why Go?" finds thoughts about performance philosophy
+- **Tag** thoughts with people, dates, topics, and action items (populated by a future "brain" layer or manually via API)
 
 ## Stack
 

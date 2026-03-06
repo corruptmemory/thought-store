@@ -45,7 +45,7 @@ brain.go         ThoughtStore interface, LocalBrain (direct SQLite+Ollama)
 remote.go        RemoteBrain (HTTP client with URL fallback chain)
 mcp.go           MCP server setup (5 tools: capture, search, list, stats, diagnostics)
 diagnostics.go   Diagnostic report types, BrainMode enum, NetworkType classifier
-sqlite_store.go   SQLite store (insert, list, search, embeddings, import, forget)
+sqlite_store.go   SQLite store (insert, list, search, embeddings, metadata, import, forget)
 vecindex.go      SIMD-accelerated in-memory vector index (viterin/vek)
 sync.go          Bundle export/import: zstd tarballs, gossip-style merge
 ollama.go        Ollama embedding client (/api/embeddings endpoint)
@@ -73,6 +73,8 @@ static/          CSS (tokens.css, app.css) and vendored htmx
 - **Setup wizard**: `./thought-store setup` interactively checks/installs Ollama, prompts for SQLite path, and generates `thought-store.toml`. Uses `charmbracelet/huh` for forms and `lipgloss` for styled output. Detects package managers (paru/yay/pacman/brew).
 - **Service management**: `./thought-store service` subcommand with install/uninstall/enable/disable/status/logs. Platform-agnostic `ServiceManager` interface with build-tagged implementations: systemd on Linux, stub on other platforms. User services by default, `--system` for system-level. Reusable pattern for future projects.
 - **Thought state lifecycle**: `ThoughtState` fake enum (active=0, refined=1, forgotten=2). Active and refined are cached/derived. Forgotten is a destructive tombstone — content erased, embedding deleted, UUID preserved for sync propagation. List/Stats/Search default to active-only. LoadEmbeddings includes active+refined. Sync propagates forgotten state: if foreign thought is forgotten, local copy gets forgotten too.
+- **Thought metadata**: Two-table design — `metadata` (content-addressed labels, deduplicated by type+value) and `thought_metadata` (UUID-tracked associations for sync). `MetadataType` enum: person, date, tag, actionItem. Metadata is populated externally (future brain layer), not at capture time. ForgetThought deletes associations. Sync imports labels then associations with ID remapping.
+- **Enum stability**: All integer enums stored in the DB (`ThoughtState`, `MetadataType`, `BrainMode`) are append-only. Order must be preserved forever. You can only add new values, never delete or reorder.
 - **Distributed sync**: Gossip-style full-state snapshot exchange. `ExportBundle` checkpoints WAL, packs `brain.db` + `assets/` into a zstd tarball with canonical `brain.db` name. `ImportBundle` opens the foreign DB read-only, imports new instances by UUID, deduplicates thoughts by `unique_id`, transfers embeddings when models match (queues for re-embed when they don't). Append-only thoughts + UUIDs = CRDT by construction. CLI: `sync pull --from URL`, `sync push --to URL`. HTTP: `GET /api/sync` (export), `POST /api/sync` (import). `POST /api/reload` re-reads embeddings into VecIndex after external DB changes; `sync pull` calls it automatically.
 
 ## Tests
@@ -89,7 +91,8 @@ Integration tests against real Ollama (no mocks). SQLite tests use t.TempDir() f
 - `service_linux_test.go` — unit file path generation, systemctl show output parsing
 - `setup_test.go` — package manager detection, install command generation, config file checks
 - `state_test.go` — ThoughtState enum, schema migration, query filtering by state, ForgetThought, VecIndex.Remove, sync state preservation
-- `sync_test.go` — export, unpack round-trip, import, transitive sync (C→B→A), model mismatch, forgotten propagation, refined preservation
+- `metadata_test.go` — MetadataType enum, schema migration, EnsureMetadata, AddThoughtMetadata, LoadThoughtMetadata, metadata in List/GetByUniqueIDs, ForgetThought deletes metadata
+- `sync_test.go` — export, unpack round-trip, import, transitive sync (C→B→A), model mismatch, forgotten propagation, refined preservation, metadata sync
 - `sync_http_test.go` — HTTP sync round-trip (GET export, POST import between two servers)
 
 ## Future direction
