@@ -242,6 +242,7 @@ func (s *SQLiteStore) List(ctx context.Context, limit, offset int) ([]Thought, e
 		`SELECT t.unique_id, t.content, src.name, t.created_at
 		 FROM thoughts t
 		 JOIN sources src ON src.id = t.source_id
+		 WHERE t.state = 0
 		 ORDER BY t.created_at DESC LIMIT ? OFFSET ?`,
 		limit, offset)
 	if err != nil {
@@ -267,7 +268,7 @@ func (s *SQLiteStore) Stats(ctx context.Context) (*StoreStats, error) {
 	var stats StoreStats
 	var oldestAt, newestAt sql.NullString
 	err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*), MIN(created_at), MAX(created_at) FROM thoughts`,
+		`SELECT COUNT(*), MIN(created_at), MAX(created_at) FROM thoughts WHERE state = 0`,
 	).Scan(&stats.Total, &oldestAt, &newestAt)
 	if err != nil {
 		return nil, fmt.Errorf("stats query: %w", err)
@@ -285,6 +286,7 @@ func (s *SQLiteStore) Stats(ctx context.Context) (*StoreStats, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT src.name, COUNT(*) FROM thoughts t
 		 JOIN sources src ON src.id = t.source_id
+		 WHERE t.state = 0
 		 GROUP BY src.name`)
 	if err != nil {
 		return nil, fmt.Errorf("stats by source: %w", err)
@@ -306,7 +308,7 @@ func (s *SQLiteStore) Stats(ctx context.Context) (*StoreStats, error) {
 // ListAllContent returns all thought IDs and content for re-embedding.
 func (s *SQLiteStore) ListAllContent(ctx context.Context) ([]ThoughtRow, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT unique_id, content FROM thoughts ORDER BY created_at ASC`)
+		`SELECT unique_id, content FROM thoughts WHERE state IN (0, 1) ORDER BY created_at ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("list all content: %w", err)
 	}
@@ -356,7 +358,7 @@ func (s *SQLiteStore) LoadEmbeddings(ctx context.Context, modelID int) ([]string
 		`SELECT t.unique_id, e.vector
 		 FROM embeddings e
 		 JOIN thoughts t ON t.id = e.thought_id
-		 WHERE e.model_id = ?`, modelID)
+		 WHERE e.model_id = ? AND t.state IN (0, 1)`, modelID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load embeddings: %w", err)
 	}

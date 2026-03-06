@@ -118,6 +118,121 @@ func TestMigrateAddsStateColumn(t *testing.T) {
 	}
 }
 
+func TestListFiltersActiveOnly(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "list-state.db")
+	store, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	store.Migrate(ctx)
+	instID, _ := store.EnsureInstance(ctx, "test", "")
+	modelID, _ := store.EnsureModel(ctx, "test-model", "", 4)
+	store.SetActiveModel(ctx, modelID)
+
+	store.Insert(ctx, "active thought", []float32{0.1, 0.2, 0.3, 0.4}, "cli", instID, modelID)
+	store.Insert(ctx, "another active", []float32{0.5, 0.6, 0.7, 0.8}, "web", instID, modelID)
+
+	// Manually set one thought to forgotten
+	store.db.ExecContext(ctx, `UPDATE thoughts SET state = 2, content = '' WHERE content = 'another active'`)
+
+	thoughts, err := store.List(ctx, 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(thoughts) != 1 {
+		t.Fatalf("expected 1 active thought, got %d", len(thoughts))
+	}
+	if thoughts[0].Content != "active thought" {
+		t.Fatalf("expected 'active thought', got %q", thoughts[0].Content)
+	}
+}
+
+func TestStatsCountsActiveOnly(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "stats-state.db")
+	store, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	store.Migrate(ctx)
+	instID, _ := store.EnsureInstance(ctx, "test", "")
+	modelID, _ := store.EnsureModel(ctx, "test-model", "", 4)
+	store.SetActiveModel(ctx, modelID)
+
+	store.Insert(ctx, "one", []float32{0.1, 0.2, 0.3, 0.4}, "cli", instID, modelID)
+	store.Insert(ctx, "two", []float32{0.5, 0.6, 0.7, 0.8}, "cli", instID, modelID)
+
+	store.db.ExecContext(ctx, `UPDATE thoughts SET state = 2, content = '' WHERE content = 'two'`)
+
+	stats, err := store.Stats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Total != 1 {
+		t.Fatalf("expected total=1, got %d", stats.Total)
+	}
+}
+
+func TestListAllContentSkipsForgotten(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "listall-state.db")
+	store, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	store.Migrate(ctx)
+	instID, _ := store.EnsureInstance(ctx, "test", "")
+	modelID, _ := store.EnsureModel(ctx, "test-model", "", 4)
+	store.SetActiveModel(ctx, modelID)
+
+	store.Insert(ctx, "keep", []float32{0.1, 0.2, 0.3, 0.4}, "cli", instID, modelID)
+	store.Insert(ctx, "forget", []float32{0.5, 0.6, 0.7, 0.8}, "cli", instID, modelID)
+
+	store.db.ExecContext(ctx, `UPDATE thoughts SET state = 2, content = '' WHERE content = 'forget'`)
+
+	rows, err := store.ListAllContent(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+}
+
+func TestLoadEmbeddingsSkipsForgotten(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "embed-state.db")
+	store, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	store.Migrate(ctx)
+	instID, _ := store.EnsureInstance(ctx, "test", "")
+	modelID, _ := store.EnsureModel(ctx, "test-model", "", 4)
+	store.SetActiveModel(ctx, modelID)
+
+	store.Insert(ctx, "keep", []float32{0.1, 0.2, 0.3, 0.4}, "cli", instID, modelID)
+	store.Insert(ctx, "forget", []float32{0.5, 0.6, 0.7, 0.8}, "cli", instID, modelID)
+
+	store.db.ExecContext(ctx, `UPDATE thoughts SET state = 2, content = '' WHERE content = 'forget'`)
+
+	ids, vecs, err := store.LoadEmbeddings(ctx, modelID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 1 {
+		t.Fatalf("expected 1 embedding, got %d", len(ids))
+	}
+	if len(vecs) != 1 {
+		t.Fatalf("expected 1 vector, got %d", len(vecs))
+	}
+}
+
 func TestThoughtStateUnmarshalText(t *testing.T) {
 	tests := []struct {
 		text string
