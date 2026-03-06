@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 )
 
@@ -9,14 +10,28 @@ func TestReEmbed(t *testing.T) {
 	ollamaAvailable(t)
 
 	ctx := context.Background()
-	store, err := NewStore(ctx, "postgres://thoughtstore:thoughtstore@localhost/thoughtstore?sslmode=disable")
+	dbPath := filepath.Join(t.TempDir(), "reembed.db")
+	store, err := NewSQLiteStore(dbPath)
 	if err != nil {
-		t.Skip("Postgres not available")
+		t.Fatalf("NewSQLiteStore: %v", err)
 	}
 	defer store.Close()
 
 	if err := store.Migrate(ctx); err != nil {
 		t.Fatalf("Migrate: %v", err)
+	}
+
+	instanceID, err := store.EnsureInstance(ctx, "test", "reembed test")
+	if err != nil {
+		t.Fatalf("EnsureInstance: %v", err)
+	}
+
+	modelID, err := store.EnsureModel(ctx, "mxbai-embed-large", "", 1024)
+	if err != nil {
+		t.Fatalf("EnsureModel: %v", err)
+	}
+	if err := store.SetActiveModel(ctx, modelID); err != nil {
+		t.Fatalf("SetActiveModel: %v", err)
 	}
 
 	ollama := NewOllamaClient("http://localhost:11434", "mxbai-embed-large")
@@ -26,7 +41,7 @@ func TestReEmbed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Embed: %v", err)
 	}
-	thought, err := store.Insert(ctx, "re-embed test: concurrency is not parallelism", embedding, "test")
+	thought, err := store.Insert(ctx, "re-embed test: concurrency is not parallelism", embedding, "test", instanceID, modelID)
 	if err != nil {
 		t.Fatalf("Insert: %v", err)
 	}
@@ -59,28 +74,28 @@ func TestReEmbed(t *testing.T) {
 		t.Fatalf("expected 1024 dims, got %d", len(embeddings[0]))
 	}
 
-	// UpdateEmbeddings
-	err = store.UpdateEmbeddings(ctx, []string{thought.ID}, embeddings)
+	// UpdateEmbeddings with modelID
+	err = store.UpdateEmbeddings(ctx, []string{thought.ID}, embeddings, modelID)
 	if err != nil {
 		t.Fatalf("UpdateEmbeddings: %v", err)
 	}
 
-	// Verify the thought is still searchable after re-embed
-	results, err := store.Search(ctx, embeddings[0], 5)
+	// Verify via LoadEmbeddings
+	ids, vectors, err := store.LoadEmbeddings(ctx, modelID)
 	if err != nil {
-		t.Fatalf("Search after re-embed: %v", err)
+		t.Fatalf("LoadEmbeddings: %v", err)
 	}
 	found = false
-	for _, r := range results {
-		if r.ID == thought.ID {
+	for i, id := range ids {
+		if id == thought.ID {
 			found = true
+			if len(vectors[i]) != 1024 {
+				t.Fatalf("expected 1024-dim vector, got %d", len(vectors[i]))
+			}
 			break
 		}
 	}
 	if !found {
-		t.Fatal("expected test thought in search results after re-embed")
+		t.Fatal("expected to find thought embedding after re-embed")
 	}
-
-	// Cleanup
-	store.pool.Exec(ctx, "DELETE FROM thoughts WHERE id = $1", thought.ID)
 }

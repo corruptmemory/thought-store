@@ -7,7 +7,7 @@ import (
 )
 
 // ThoughtStore is the core interface for interacting with the thought store.
-// Both LocalBrain (direct Postgres+Ollama) and RemoteBrain (HTTP client) implement it.
+// Both LocalBrain (direct SQLite+Ollama) and RemoteBrain (HTTP client) implement it.
 type ThoughtStore interface {
 	Capture(ctx context.Context, content string, source string) (*Thought, error)
 	Search(ctx context.Context, query string, limit int) ([]SearchResult, error)
@@ -18,10 +18,13 @@ type ThoughtStore interface {
 
 var _ ThoughtStore = (*LocalBrain)(nil)
 
-// LocalBrain implements ThoughtStore using direct Postgres and Ollama access.
+// LocalBrain implements ThoughtStore using direct SQLite and Ollama access.
 type LocalBrain struct {
-	store       *Store
+	store       *SQLiteStore
 	ollama      *OllamaClient
+	vecIndex    *VecIndex
+	instanceID  int
+	modelID     int
 	startedAt   time.Time
 	mdnsName    string
 	mdnsService string
@@ -33,8 +36,15 @@ func (b *LocalBrain) SetMDNS(name, service string) {
 	b.mdnsService = service
 }
 
-func NewLocalBrain(store *Store, ollama *OllamaClient) *LocalBrain {
-	return &LocalBrain{store: store, ollama: ollama, startedAt: time.Now()}
+func NewLocalBrain(store *SQLiteStore, ollama *OllamaClient, vecIndex *VecIndex, instanceID, modelID int) *LocalBrain {
+	return &LocalBrain{
+		store:      store,
+		ollama:     ollama,
+		vecIndex:   vecIndex,
+		instanceID: instanceID,
+		modelID:    modelID,
+		startedAt:  time.Now(),
+	}
 }
 
 func (b *LocalBrain) Capture(ctx context.Context, content string, source string) (*Thought, error) {
@@ -42,7 +52,12 @@ func (b *LocalBrain) Capture(ctx context.Context, content string, source string)
 	if err != nil {
 		return nil, err
 	}
-	return b.store.Insert(ctx, content, embedding, source)
+	thought, err := b.store.Insert(ctx, content, embedding, source, b.instanceID, b.modelID)
+	if err != nil {
+		return nil, err
+	}
+	b.vecIndex.Add(thought.ID, embedding)
+	return thought, nil
 }
 
 func (b *LocalBrain) Search(ctx context.Context, query string, limit int) ([]SearchResult, error) {
@@ -50,7 +65,29 @@ func (b *LocalBrain) Search(ctx context.Context, query string, limit int) ([]Sea
 	if err != nil {
 		return nil, err
 	}
-	return b.store.Search(ctx, embedding, limit)
+
+	vecResults := b.vecIndex.Search(embedding, limit)
+
+	uids := make([]string, len(vecResults))
+	simMap := make(map[string]float64)
+	for i, vr := range vecResults {
+		uids[i] = vr.ID
+		simMap[vr.ID] = vr.Similarity
+	}
+
+	thoughts, err := b.store.GetByUniqueIDs(ctx, uids)
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]SearchResult, len(thoughts))
+	for i, t := range thoughts {
+		results[i] = SearchResult{
+			Thought:    t,
+			Similarity: simMap[t.ID],
+		}
+	}
+	return results, nil
 }
 
 func (b *LocalBrain) List(ctx context.Context, limit, offset int) ([]Thought, error) {
@@ -67,7 +104,7 @@ func (b *LocalBrain) Diagnostics(ctx context.Context) (*DiagnosticsReport, error
 		StartedAt: b.startedAt,
 		Uptime:    time.Since(b.startedAt).Truncate(time.Second).String(),
 		GoVersion: runtime.Version(),
-		Postgres:  b.store.Diagnostics(ctx),
+		SQLite:    b.store.Diagnostics(ctx),
 		Ollama:    b.ollama.Diagnostics(ctx),
 	}
 	if b.mdnsName != "" {

@@ -16,7 +16,7 @@ import (
 
 const unitTemplate = `[Unit]
 Description=Thought Store
-After=network.target postgresql.service
+After=network.target
 
 [Service]
 Type=simple

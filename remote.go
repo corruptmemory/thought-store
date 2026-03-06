@@ -14,6 +14,10 @@ import (
 
 var _ ThoughtStore = (*RemoteBrain)(nil)
 
+// TODO: With sync, RemoteBrain's primary use case (accessing a remote DB) is
+// replaced by pulling the DB locally. Decide whether to keep this for "thin
+// client" mode (no local Ollama/DB) or remove it entirely.
+//
 // RemoteBrain implements ThoughtStore by talking to a thought-store HTTP server.
 // It tries URLs in order, using the first one that responds.
 type RemoteBrain struct {

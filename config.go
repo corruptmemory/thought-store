@@ -24,7 +24,7 @@ type ServerConfig struct {
 }
 
 type DatabaseConfig struct {
-	URL string `toml:"url"`
+	Path string `toml:"path"` // SQLite database file path
 }
 
 type OllamaConfig struct {

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	flags "github.com/jessevdk/go-flags"
@@ -91,6 +92,21 @@ type ServiceLogsCmd struct {
 	System bool `long:"system" description:"Show system service logs"`
 }
 
+type SyncCmd struct {
+	Pull SyncPullCmd `command:"pull" description:"Pull bundle from a peer and merge locally"`
+	Push SyncPushCmd `command:"push" description:"Push local bundle to a peer"`
+}
+
+type SyncPullCmd struct {
+	Config string `long:"config" default:"thought-store.toml" description:"Path to config file"`
+	From   string `long:"from" required:"true" description:"URL of the peer to pull from"`
+}
+
+type SyncPushCmd struct {
+	Config string `long:"config" default:"thought-store.toml" description:"Path to config file"`
+	To     string `long:"to" required:"true" description:"URL of the peer to push to"`
+}
+
 var opts struct {
 	Serve   ServeCmd   `command:"serve" description:"Start the HTTP server"`
 	Capture CaptureCmd `command:"capture" description:"Capture a thought"`
@@ -100,6 +116,7 @@ var opts struct {
 	Scan    ScanCmd    `command:"scan" description:"Scan for thought-store instances on the local network"`
 	Service ServiceCmd `command:"service" description:"Manage thought-store as a system service"`
 	Setup   SetupCmd   `command:"setup" description:"Interactive guided setup for new installations"`
+	Sync    SyncCmd    `command:"sync" description:"Sync thoughts with a peer"`
 }
 
 func main() {
@@ -121,9 +138,9 @@ func (cmd *ServeCmd) Execute(args []string) error {
 
 	ctx := context.Background()
 
-	store, err := NewStore(ctx, cfg.Database.URL)
+	store, err := NewSQLiteStore(cfg.Database.Path)
 	if err != nil {
-		return fmt.Errorf("connect to database: %w", err)
+		return fmt.Errorf("open database: %w", err)
 	}
 	defer store.Close()
 
@@ -131,9 +148,38 @@ func (cmd *ServeCmd) Execute(args []string) error {
 		return fmt.Errorf("migrate: %w", err)
 	}
 
+	hostname, _ := os.Hostname()
+	instanceID, err := store.EnsureInstance(ctx, hostname, "")
+	if err != nil {
+		return fmt.Errorf("ensure instance: %w", err)
+	}
+
+	modelID, err := store.EnsureModel(ctx, cfg.Ollama.Model, "", 1024)
+	if err != nil {
+		return fmt.Errorf("ensure model: %w", err)
+	}
+	if err := store.SetActiveModel(ctx, modelID); err != nil {
+		return fmt.Errorf("set active model: %w", err)
+	}
+
 	ollama := NewOllamaClient(cfg.Ollama.URL, cfg.Ollama.Model)
-	brain := NewLocalBrain(store, ollama)
+
+	vecIndex := NewVecIndex()
+	ids, vectors, err := store.LoadEmbeddings(ctx, modelID)
+	if err != nil {
+		return fmt.Errorf("load embeddings: %w", err)
+	}
+	vecIndex.Load(ids, vectors)
+	fmt.Fprintf(os.Stderr, "Loaded %d embeddings into memory\n", vecIndex.Len())
+
+	brain := NewLocalBrain(store, ollama, vecIndex, instanceID, modelID)
 	srv := NewServer(brain)
+
+	instanceUID, err := store.InstanceUID(ctx, instanceID)
+	if err != nil {
+		return fmt.Errorf("instance uid: %w", err)
+	}
+	srv.SetSyncState(store, cfg.Database.Path, instanceUID, modelID, vecIndex)
 
 	// mDNS advertising
 	if cfg.MDNS.Name != "" {
@@ -236,9 +282,9 @@ func (cmd *MCPCmd) Execute(args []string) error {
 	} else {
 		ctx := context.Background()
 
-		store, err := NewStore(ctx, cfg.Database.URL)
+		store, err := NewSQLiteStore(cfg.Database.Path)
 		if err != nil {
-			return fmt.Errorf("connect to database: %w", err)
+			return fmt.Errorf("open database: %w", err)
 		}
 		defer store.Close()
 
@@ -246,8 +292,31 @@ func (cmd *MCPCmd) Execute(args []string) error {
 			return fmt.Errorf("migrate: %w", err)
 		}
 
+		hostname, _ := os.Hostname()
+		instanceID, err := store.EnsureInstance(ctx, hostname, "")
+		if err != nil {
+			return fmt.Errorf("ensure instance: %w", err)
+		}
+
+		modelID, err := store.EnsureModel(ctx, cfg.Ollama.Model, "", 1024)
+		if err != nil {
+			return fmt.Errorf("ensure model: %w", err)
+		}
+		if err := store.SetActiveModel(ctx, modelID); err != nil {
+			return fmt.Errorf("set active model: %w", err)
+		}
+
 		ollama := NewOllamaClient(cfg.Ollama.URL, cfg.Ollama.Model)
-		brain = NewLocalBrain(store, ollama)
+
+		vecIndex := NewVecIndex()
+		ids, vectors, err := store.LoadEmbeddings(ctx, modelID)
+		if err != nil {
+			return fmt.Errorf("load embeddings: %w", err)
+		}
+		vecIndex.Load(ids, vectors)
+		fmt.Fprintf(os.Stderr, "Loaded %d embeddings into memory\n", vecIndex.Len())
+
+		brain = NewLocalBrain(store, ollama, vecIndex, instanceID, modelID)
 	}
 
 	srv := newMCPServer(brain)
@@ -262,11 +331,26 @@ func (cmd *ReEmbedCmd) Execute(args []string) error {
 
 	ctx := context.Background()
 
-	store, err := NewStore(ctx, cfg.Database.URL)
+	store, err := NewSQLiteStore(cfg.Database.Path)
 	if err != nil {
-		return fmt.Errorf("connect to database: %w", err)
+		return fmt.Errorf("open database: %w", err)
 	}
 	defer store.Close()
+
+	if err := store.Migrate(ctx); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+
+	hostname, _ := os.Hostname()
+	_, err = store.EnsureInstance(ctx, hostname, "")
+	if err != nil {
+		return fmt.Errorf("ensure instance: %w", err)
+	}
+
+	modelID, err := store.EnsureModel(ctx, cfg.Ollama.Model, "", 1024)
+	if err != nil {
+		return fmt.Errorf("ensure model: %w", err)
+	}
 
 	ollama := NewOllamaClient(cfg.Ollama.URL, cfg.Ollama.Model)
 
@@ -321,7 +405,7 @@ func (cmd *ReEmbedCmd) Execute(args []string) error {
 		}
 
 		// Update database
-		if err := store.UpdateEmbeddings(ctx, ids, embeddings); err != nil {
+		if err := store.UpdateEmbeddings(ctx, ids, embeddings, modelID); err != nil {
 			return fmt.Errorf("update batch %d-%d: %w", i+1, end, err)
 		}
 
@@ -472,4 +556,134 @@ func (cmd *ServiceStatusCmd) Execute(args []string) error {
 func (cmd *ServiceLogsCmd) Execute(args []string) error {
 	mgr := NewServiceManager(serviceName, cmd.System)
 	return mgr.Logs(cmd.Follow, cmd.Lines)
+}
+
+func (cmd *SyncPullCmd) Execute(args []string) error {
+	cfg, err := LoadConfig(cmd.Config)
+	if err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+
+	store, err := NewSQLiteStore(cfg.Database.Path)
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+	defer store.Close()
+
+	if err := store.Migrate(ctx); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+
+	hostname, _ := os.Hostname()
+	instanceID, err := store.EnsureInstance(ctx, hostname, "")
+	if err != nil {
+		return fmt.Errorf("ensure instance: %w", err)
+	}
+
+	modelID, err := store.EnsureModel(ctx, cfg.Ollama.Model, "", 1024)
+	if err != nil {
+		return fmt.Errorf("ensure model: %w", err)
+	}
+
+	myUID, err := store.InstanceUID(ctx, instanceID)
+	if err != nil {
+		return fmt.Errorf("instance uid: %w", err)
+	}
+
+	peerURL := strings.TrimRight(cmd.From, "/") + "/api/sync"
+	fmt.Fprintf(os.Stderr, "Pulling from %s...\n", peerURL)
+
+	resp, err := http.Get(peerURL)
+	if err != nil {
+		return fmt.Errorf("fetch bundle: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("peer returned %d: %s", resp.StatusCode, body)
+	}
+
+	result, err := ImportBundle(ctx, store, myUID, modelID, resp.Body, nil)
+	if err != nil {
+		return fmt.Errorf("import: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "Imported: %d new instances, %d new thoughts, %d skipped, %d queued for re-embed, %d forgotten\n",
+		result.NewInstances, result.NewThoughts, result.Skipped, result.ReembedQueued, result.Forgotten)
+
+	// If the local server is running, tell it to reload embeddings
+	if result.NewThoughts > 0 {
+		reloadURL := "http://localhost" + cfg.Server.Addr + "/api/reload"
+		resp, err := http.Post(reloadURL, "", nil)
+		if err == nil {
+			resp.Body.Close()
+			fmt.Fprintf(os.Stderr, "Notified local server to reload\n")
+		}
+	}
+
+	return nil
+}
+
+func (cmd *SyncPushCmd) Execute(args []string) error {
+	cfg, err := LoadConfig(cmd.Config)
+	if err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+
+	store, err := NewSQLiteStore(cfg.Database.Path)
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+	defer store.Close()
+
+	if err := store.Migrate(ctx); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+
+	// Create bundle in temp file
+	tmpFile, err := os.CreateTemp("", "sync-push-*.tar.zst")
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	defer os.Remove(tmpFile.Name())
+	defer tmpFile.Close()
+
+	fmt.Fprintf(os.Stderr, "Creating bundle...\n")
+	if err := ExportBundle(ctx, store, cfg.Database.Path, tmpFile); err != nil {
+		return fmt.Errorf("export: %w", err)
+	}
+	tmpFile.Close()
+
+	// Upload to peer
+	peerURL := strings.TrimRight(cmd.To, "/") + "/api/sync"
+	fmt.Fprintf(os.Stderr, "Pushing to %s...\n", peerURL)
+
+	bundleFile, err := os.Open(tmpFile.Name())
+	if err != nil {
+		return fmt.Errorf("open bundle: %w", err)
+	}
+	defer bundleFile.Close()
+
+	resp, err := http.Post(peerURL, "application/octet-stream", bundleFile)
+	if err != nil {
+		return fmt.Errorf("push bundle: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("peer returned %d: %s", resp.StatusCode, body)
+	}
+
+	var result ImportResult
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	fmt.Fprintf(os.Stderr, "Peer imported: %d new instances, %d new thoughts, %d skipped, %d queued for re-embed, %d forgotten\n",
+		result.NewInstances, result.NewThoughts, result.Skipped, result.ReembedQueued, result.Forgotten)
+	return nil
 }

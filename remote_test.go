@@ -5,36 +5,67 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"path/filepath"
 	"testing"
 	"time"
 )
 
-func TestRemoteBrain(t *testing.T) {
+func newTestLocalServer(t *testing.T) (string, *SQLiteStore) {
+	t.Helper()
 	ollamaAvailable(t)
 
 	ctx := context.Background()
-	store, err := NewStore(ctx, "postgres://thoughtstore:thoughtstore@localhost/thoughtstore?sslmode=disable")
+	dbPath := filepath.Join(t.TempDir(), "remote-test.db")
+	store, err := NewSQLiteStore(dbPath)
 	if err != nil {
-		t.Skip("Postgres not available")
+		t.Fatalf("NewSQLiteStore: %v", err)
 	}
-	defer store.Close()
+	t.Cleanup(func() { store.Close() })
 
 	if err := store.Migrate(ctx); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
+	instanceID, err := store.EnsureInstance(ctx, "test", "remote test")
+	if err != nil {
+		t.Fatalf("EnsureInstance: %v", err)
+	}
+
+	modelID, err := store.EnsureModel(ctx, "mxbai-embed-large", "", 1024)
+	if err != nil {
+		t.Fatalf("EnsureModel: %v", err)
+	}
+	if err := store.SetActiveModel(ctx, modelID); err != nil {
+		t.Fatalf("SetActiveModel: %v", err)
+	}
+
 	ollama := NewOllamaClient("http://localhost:11434", "mxbai-embed-large")
-	brain := NewLocalBrain(store, ollama)
+
+	vecIndex := NewVecIndex()
+	ids, vectors, err := store.LoadEmbeddings(ctx, modelID)
+	if err != nil {
+		t.Fatalf("LoadEmbeddings: %v", err)
+	}
+	vecIndex.Load(ids, vectors)
+
+	brain := NewLocalBrain(store, ollama, vecIndex, instanceID, modelID)
 	srv := NewServer(brain)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	defer ln.Close()
+	t.Cleanup(func() { ln.Close() })
 	go http.Serve(ln, srv)
 
 	base := fmt.Sprintf("http://%s", ln.Addr().String())
+	return base, store
+}
+
+func TestRemoteBrain(t *testing.T) {
+	base, _ := newTestLocalServer(t)
+
+	ctx := context.Background()
 	remote := NewRemoteBrain([]string{base}, nil, 5*time.Second)
 
 	// Capture
@@ -72,37 +103,18 @@ func TestRemoteBrain(t *testing.T) {
 	if stats.Total == 0 {
 		t.Fatal("expected non-zero total")
 	}
-
-	// Cleanup
-	store.pool.Exec(ctx, "DELETE FROM thoughts WHERE source = 'test' AND content LIKE 'remote test:%'")
 }
 
 func TestRemoteBrainFallback(t *testing.T) {
-	ollamaAvailable(t)
+	base, _ := newTestLocalServer(t)
 
 	ctx := context.Background()
-	store, err := NewStore(ctx, "postgres://thoughtstore:thoughtstore@localhost/thoughtstore?sslmode=disable")
-	if err != nil {
-		t.Skip("Postgres not available")
+
+	// Seed a thought so stats returns non-zero
+	direct := NewRemoteBrain([]string{base}, nil, 5*time.Second)
+	if _, err := direct.Capture(ctx, "fallback test: seed thought", "test"); err != nil {
+		t.Fatalf("seed Capture: %v", err)
 	}
-	defer store.Close()
-
-	if err := store.Migrate(ctx); err != nil {
-		t.Fatalf("Migrate: %v", err)
-	}
-
-	ollama := NewOllamaClient("http://localhost:11434", "mxbai-embed-large")
-	brain := NewLocalBrain(store, ollama)
-	srv := NewServer(brain)
-
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	defer ln.Close()
-	go http.Serve(ln, srv)
-
-	base := fmt.Sprintf("http://%s", ln.Addr().String())
 
 	// First URL is unreachable, second is the real server
 	remote := NewRemoteBrain([]string{"http://127.0.0.1:1", base}, nil, 2*time.Second)

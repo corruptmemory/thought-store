@@ -20,32 +20,32 @@ func TestDetectPackageManager(t *testing.T) {
 
 func TestInstallCommand(t *testing.T) {
 	tests := []struct {
-		name    string
-		pm      packageManager
-		pkg     string
-		wantBin string
+		name     string
+		pm       packageManager
+		pkg      string
+		wantBin  string
 		wantLast string
 	}{
 		{
-			name:     "paru postgresql",
+			name:     "paru ollama",
 			pm:       packageManager{name: "paru", path: "/usr/bin/paru"},
-			pkg:      "postgresql",
+			pkg:      "ollama",
 			wantBin:  "/usr/bin/paru",
-			wantLast: "postgresql",
+			wantLast: "ollama",
 		},
 		{
-			name:     "pacman postgresql",
+			name:     "pacman ollama",
 			pm:       packageManager{name: "pacman", path: "/usr/bin/pacman"},
-			pkg:      "postgresql",
+			pkg:      "ollama",
 			wantBin:  "sudo",
-			wantLast: "postgresql",
+			wantLast: "ollama",
 		},
 		{
-			name:     "brew postgresql",
+			name:     "brew ollama",
 			pm:       packageManager{name: "brew", path: "/opt/homebrew/bin/brew"},
-			pkg:      "postgresql",
+			pkg:      "ollama",
 			wantBin:  "/opt/homebrew/bin/brew",
-			wantLast: "postgresql@17",
+			wantLast: "ollama",
 		},
 		{
 			name:     "yay ollama",
@@ -78,12 +78,6 @@ func TestCheckConfigFileNonexistent(t *testing.T) {
 	if err := cmd.checkConfigFile(); err != nil {
 		t.Errorf("checkConfigFile() for nonexistent file returned error: %v", err)
 	}
-}
-
-func TestIsPostgresRunning(t *testing.T) {
-	// Just verify the function returns without panicking.
-	// The result depends on whether PostgreSQL is running on the host.
-	_ = isPostgresRunning()
 }
 
 func TestIsOllamaRunning(t *testing.T) {

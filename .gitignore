@@ -1,3 +1,6 @@
 thought-store
+*.db
+*.db-shm
+*.db-wal
 *_templ.go
 tmp/

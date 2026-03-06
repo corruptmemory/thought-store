@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -15,9 +16,10 @@ func TestE2E(t *testing.T) {
 	ollamaAvailable(t)
 
 	ctx := context.Background()
-	store, err := NewStore(ctx, "postgres://thoughtstore:thoughtstore@localhost/thoughtstore?sslmode=disable")
+	dbPath := filepath.Join(t.TempDir(), "e2e.db")
+	store, err := NewSQLiteStore(dbPath)
 	if err != nil {
-		t.Skip("Postgres not available")
+		t.Fatalf("NewSQLiteStore: %v", err)
 	}
 	defer store.Close()
 
@@ -25,8 +27,29 @@ func TestE2E(t *testing.T) {
 		t.Fatalf("Migrate: %v", err)
 	}
 
+	instanceID, err := store.EnsureInstance(ctx, "test", "e2e test")
+	if err != nil {
+		t.Fatalf("EnsureInstance: %v", err)
+	}
+
+	modelID, err := store.EnsureModel(ctx, "mxbai-embed-large", "", 1024)
+	if err != nil {
+		t.Fatalf("EnsureModel: %v", err)
+	}
+	if err := store.SetActiveModel(ctx, modelID); err != nil {
+		t.Fatalf("SetActiveModel: %v", err)
+	}
+
 	ollama := NewOllamaClient("http://localhost:11434", "mxbai-embed-large")
-	brain := NewLocalBrain(store, ollama)
+
+	vecIndex := NewVecIndex()
+	ids, vectors, err := store.LoadEmbeddings(ctx, modelID)
+	if err != nil {
+		t.Fatalf("LoadEmbeddings: %v", err)
+	}
+	vecIndex.Load(ids, vectors)
+
+	brain := NewLocalBrain(store, ollama, vecIndex, instanceID, modelID)
 	srv := NewServer(brain)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -92,14 +115,11 @@ func TestE2E(t *testing.T) {
 	if diag.Mode != BrainModeLocal {
 		t.Fatalf("expected local mode, got %s", diag.Mode)
 	}
-	if diag.Postgres == nil {
-		t.Fatal("expected postgres diagnostics")
+	if diag.SQLite == nil {
+		t.Fatal("expected sqlite diagnostics")
 	}
-	if diag.Postgres.ThoughtCount == 0 {
+	if diag.SQLite.ThoughtCount == 0 {
 		t.Fatal("expected non-zero thought count in diagnostics")
-	}
-	if !diag.Postgres.HNSWIndex {
-		t.Fatal("expected HNSW index to exist")
 	}
 	if diag.Ollama == nil {
 		t.Fatal("expected ollama diagnostics")
@@ -110,13 +130,4 @@ func TestE2E(t *testing.T) {
 	if diag.GoVersion == "" {
 		t.Fatal("expected non-empty Go version")
 	}
-	if len(diag.Postgres.Errors) > 0 {
-		t.Fatalf("unexpected postgres errors: %v", diag.Postgres.Errors)
-	}
-	if len(diag.Ollama.Errors) > 0 {
-		t.Fatalf("unexpected ollama errors: %v", diag.Ollama.Errors)
-	}
-
-	// Cleanup
-	store.pool.Exec(ctx, "DELETE FROM thoughts WHERE source = 'web' AND content LIKE 'e2e test:%'")
 }

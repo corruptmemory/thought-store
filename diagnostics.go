@@ -36,27 +36,10 @@ type DiagnosticsReport struct {
 	StartedAt time.Time     `json:"started_at"`
 	Uptime    string        `json:"uptime"`
 	GoVersion string        `json:"go_version"`
-	Postgres  *PostgresDiag `json:"postgres,omitempty"`
-	Ollama    *OllamaDiag   `json:"ollama,omitempty"`
+	Ollama *OllamaDiag `json:"ollama,omitempty"`
 	Remote    *RemoteDiag   `json:"remote,omitempty"`
+	SQLite    *SQLiteDiag   `json:"sqlite,omitempty"`
 	MDNS      *MDNSDiag     `json:"mdns,omitempty"`
-}
-
-// PostgresDiag contains diagnostics for the Postgres connection.
-type PostgresDiag struct {
-	Version         string `json:"version"`
-	PgvectorVersion string `json:"pgvector_version"`
-	Host            string `json:"host"`
-	Port            uint16 `json:"port"`
-	Database        string `json:"database"`
-	Status          string `json:"status"`
-	SchemaVersion   int    `json:"schema_version"`
-	ThoughtCount    int    `json:"thought_count"`
-	HNSWIndex       bool   `json:"hnsw_index"`
-	PoolTotal       int32  `json:"pool_total"`
-	PoolIdle        int32  `json:"pool_idle"`
-	PoolInUse       int32    `json:"pool_in_use"`
-	Errors          []string `json:"errors,omitempty"`
 }
 
 // OllamaDiag contains diagnostics for the Ollama embedding service.
@@ -69,6 +52,15 @@ type OllamaDiag struct {
 	ParameterSize string `json:"parameter_size,omitempty"`
 	Quantization  string `json:"quantization,omitempty"`
 	EmbeddingDim  int      `json:"embedding_dim,omitempty"`
+	Errors        []string `json:"errors,omitempty"`
+}
+
+// SQLiteDiag contains diagnostics for the SQLite database.
+type SQLiteDiag struct {
+	Version       string   `json:"version"`
+	Status        string   `json:"status"`
+	ThoughtCount  int      `json:"thought_count"`
+	FileSizeBytes int64    `json:"file_size_bytes,omitempty"`
 	Errors        []string `json:"errors,omitempty"`
 }
 
