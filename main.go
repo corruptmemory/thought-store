@@ -613,6 +613,17 @@ func (cmd *SyncPullCmd) Execute(args []string) error {
 
 	fmt.Fprintf(os.Stderr, "Imported: %d new instances, %d new thoughts, %d skipped, %d queued for re-embed\n",
 		result.NewInstances, result.NewThoughts, result.Skipped, result.ReembedQueued)
+
+	// If the local server is running, tell it to reload embeddings
+	if result.NewThoughts > 0 {
+		reloadURL := "http://localhost" + cfg.Server.Addr + "/api/reload"
+		resp, err := http.Post(reloadURL, "", nil)
+		if err == nil {
+			resp.Body.Close()
+			fmt.Fprintf(os.Stderr, "Notified local server to reload\n")
+		}
+	}
+
 	return nil
 }
 

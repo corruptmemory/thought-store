@@ -43,6 +43,7 @@ func NewServer(brain ThoughtStore) *Server {
 	// Sync routes
 	s.router.Get("/api/sync", s.handleSyncExport)
 	s.router.Post("/api/sync", s.handleSyncImport)
+	s.router.Post("/api/reload", s.handleReload)
 
 	// Static files
 	fs := http.FileServer(http.Dir("static"))
@@ -241,4 +242,22 @@ func (s *Server) handleSyncImport(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
+}
+
+func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil || s.vecIndex == nil {
+		http.Error(w, "not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	ids, vectors, err := s.store.LoadEmbeddings(r.Context(), s.modelID)
+	if err != nil {
+		http.Error(w, "reload failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	s.vecIndex.Load(ids, vectors)
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"reloaded":%d}`, len(ids))
 }
