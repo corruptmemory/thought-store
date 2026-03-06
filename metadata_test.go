@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"context"
+	"path/filepath"
+	"testing"
+)
 
 func TestMetadataTypeString(t *testing.T) {
 	tests := []struct {
@@ -49,5 +53,46 @@ func TestMetadataTypeUnmarshalText(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("UnmarshalText(%q) = %d, want %d", tt.text, got, tt.want)
 		}
+	}
+}
+
+func TestMigrateCreatesMetadataTables(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "migrate-meta.db")
+	store, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify metadata table exists
+	var name string
+	err = store.db.QueryRowContext(ctx,
+		`SELECT name FROM sqlite_master WHERE type='table' AND name='metadata'`).Scan(&name)
+	if err != nil {
+		t.Fatalf("metadata table not found: %v", err)
+	}
+
+	// Verify thought_metadata table exists
+	err = store.db.QueryRowContext(ctx,
+		`SELECT name FROM sqlite_master WHERE type='table' AND name='thought_metadata'`).Scan(&name)
+	if err != nil {
+		t.Fatalf("thought_metadata table not found: %v", err)
+	}
+
+	// Verify unique constraint on metadata
+	_, err = store.db.ExecContext(ctx,
+		`INSERT INTO metadata (metadata_type, value) VALUES (0, 'Sarah')`)
+	if err != nil {
+		t.Fatalf("insert metadata: %v", err)
+	}
+	_, err = store.db.ExecContext(ctx,
+		`INSERT INTO metadata (metadata_type, value) VALUES (0, 'Sarah')`)
+	if err == nil {
+		t.Fatal("expected unique constraint violation on duplicate metadata")
 	}
 }

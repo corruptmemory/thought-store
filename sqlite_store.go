@@ -88,6 +88,19 @@ func (s *SQLiteStore) Migrate(ctx context.Context) error {
 			vector     BLOB NOT NULL,
 			PRIMARY KEY (thought_id, model_id)
 		)`,
+		`CREATE TABLE IF NOT EXISTS metadata (
+			id            INTEGER PRIMARY KEY,
+			metadata_type INTEGER NOT NULL,
+			value         TEXT NOT NULL,
+			UNIQUE(metadata_type, value)
+		)`,
+		`CREATE TABLE IF NOT EXISTS thought_metadata (
+			id          INTEGER PRIMARY KEY,
+			unique_id   TEXT NOT NULL UNIQUE,
+			thought_id  INTEGER NOT NULL REFERENCES thoughts(id),
+			metadata_id INTEGER NOT NULL REFERENCES metadata(id),
+			instance_id INTEGER NOT NULL REFERENCES instances(id)
+		)`,
 	}
 
 	for _, stmt := range statements {
