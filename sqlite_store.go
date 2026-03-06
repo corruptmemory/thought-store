@@ -287,6 +287,27 @@ func (s *SQLiteStore) LoadThoughtMetadata(ctx context.Context, thoughtUIDs []str
 	return result, rows.Err()
 }
 
+// populateMetadata loads and attaches metadata to a slice of thoughts.
+func (s *SQLiteStore) populateMetadata(ctx context.Context, thoughts []Thought) error {
+	if len(thoughts) == 0 {
+		return nil
+	}
+	uids := make([]string, len(thoughts))
+	for i, t := range thoughts {
+		uids[i] = t.ID
+	}
+	meta, err := s.LoadThoughtMetadata(ctx, uids)
+	if err != nil {
+		return err
+	}
+	for i := range thoughts {
+		if entries, ok := meta[thoughts[i].ID]; ok {
+			thoughts[i].Metadata = entries
+		}
+	}
+	return nil
+}
+
 // Insert stores a thought with its embedding.
 func (s *SQLiteStore) Insert(ctx context.Context, content string, embedding []float32, source string, instanceID, modelID int) (*Thought, error) {
 	uid := uuid.New().String()
@@ -363,7 +384,13 @@ func (s *SQLiteStore) List(ctx context.Context, limit, offset int) ([]Thought, e
 		t.CreatedAt, _ = time.Parse("2006-01-02T15:04:05.000Z", createdAt)
 		thoughts = append(thoughts, t)
 	}
-	return thoughts, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := s.populateMetadata(ctx, thoughts); err != nil {
+		return nil, fmt.Errorf("load metadata: %w", err)
+	}
+	return thoughts, nil
 }
 
 // Stats returns aggregate statistics.
@@ -551,7 +578,13 @@ func (s *SQLiteStore) GetByUniqueIDs(ctx context.Context, uids []string) ([]Thou
 			result = append(result, t)
 		}
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := s.populateMetadata(ctx, result); err != nil {
+		return nil, fmt.Errorf("load metadata: %w", err)
+	}
+	return result, nil
 }
 
 // InstanceUID returns the unique_id for a given instance integer ID.

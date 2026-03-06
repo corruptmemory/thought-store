@@ -180,6 +180,66 @@ func TestLoadThoughtMetadataEmpty(t *testing.T) {
 	}
 }
 
+func TestListIncludesMetadata(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "list-meta.db")
+	store, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	store.Migrate(ctx)
+	instID, _ := store.EnsureInstance(ctx, "test", "")
+	modelID, _ := store.EnsureModel(ctx, "test-model", "", 4)
+	store.SetActiveModel(ctx, modelID)
+
+	thought, _ := store.Insert(ctx, "met Sarah about Go", []float32{0.1, 0.2, 0.3, 0.4}, "cli", instID, modelID)
+	store.AddThoughtMetadata(ctx, thought.ID, MetadataPerson, "Sarah", instID)
+	store.AddThoughtMetadata(ctx, thought.ID, MetadataTag, "Go", instID)
+
+	thoughts, err := store.List(ctx, 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(thoughts) != 1 {
+		t.Fatalf("expected 1 thought, got %d", len(thoughts))
+	}
+	if len(thoughts[0].Metadata) != 2 {
+		t.Fatalf("expected 2 metadata entries, got %d", len(thoughts[0].Metadata))
+	}
+}
+
+func TestGetByUniqueIDsIncludesMetadata(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "getbyuid-meta.db")
+	store, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	store.Migrate(ctx)
+	instID, _ := store.EnsureInstance(ctx, "test", "")
+	modelID, _ := store.EnsureModel(ctx, "test-model", "", 4)
+	store.SetActiveModel(ctx, modelID)
+
+	thought, _ := store.Insert(ctx, "tagged thought", []float32{0.1, 0.2, 0.3, 0.4}, "cli", instID, modelID)
+	store.AddThoughtMetadata(ctx, thought.ID, MetadataTag, "architecture", instID)
+
+	thoughts, err := store.GetByUniqueIDs(ctx, []string{thought.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(thoughts) != 1 {
+		t.Fatalf("expected 1 thought, got %d", len(thoughts))
+	}
+	if len(thoughts[0].Metadata) != 1 {
+		t.Fatalf("expected 1 metadata entry, got %d", len(thoughts[0].Metadata))
+	}
+	if thoughts[0].Metadata[0].Value != "architecture" {
+		t.Fatalf("expected 'architecture', got %q", thoughts[0].Metadata[0].Value)
+	}
+}
+
 func TestMigrateCreatesMetadataTables(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "migrate-meta.db")
