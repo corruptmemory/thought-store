@@ -104,6 +104,16 @@ func (s *SQLiteStore) Migrate(ctx context.Context) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_thought_metadata_thought_id ON thought_metadata(thought_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_thought_metadata_metadata_id ON thought_metadata(metadata_id)`,
+		`CREATE TABLE IF NOT EXISTS refined_thoughts (
+			id                INTEGER PRIMARY KEY,
+			unique_id         TEXT NOT NULL UNIQUE,
+			source_thought_id INTEGER NOT NULL REFERENCES thoughts(id),
+			target_thought_id INTEGER NOT NULL REFERENCES thoughts(id),
+			instance_id       INTEGER NOT NULL REFERENCES instances(id),
+			UNIQUE(source_thought_id, target_thought_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_refined_thoughts_source ON refined_thoughts(source_thought_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_refined_thoughts_target ON refined_thoughts(target_thought_id)`,
 	}
 
 	for _, stmt := range statements {
@@ -390,6 +400,61 @@ func (s *SQLiteStore) InsertWithMetadata(ctx context.Context, content string, em
 	}
 	thought.Metadata = metadata
 	return thought, nil
+}
+
+// RefineThoughts creates a summary thought from multiple sources.
+// Sources are marked as StateRefined. DAG edges are recorded.
+// The embedding is provided by the caller (already generated).
+func (s *SQLiteStore) RefineThoughts(ctx context.Context, sourceUIDs []string, content string, embedding []float32, metadata []ThoughtMetadataEntry, source string, instanceID, modelID int) (*Thought, error) {
+	// Insert the summary thought
+	summary, err := s.Insert(ctx, content, embedding, source, instanceID, modelID)
+	if err != nil {
+		return nil, fmt.Errorf("insert summary: %w", err)
+	}
+
+	// Get summary's integer ID
+	var targetID int
+	err = s.db.QueryRowContext(ctx,
+		`SELECT id FROM thoughts WHERE unique_id = ?`, summary.ID).Scan(&targetID)
+	if err != nil {
+		return nil, fmt.Errorf("find summary: %w", err)
+	}
+
+	// For each source: record edge, set state to refined
+	for _, srcUID := range sourceUIDs {
+		var srcID int
+		err := s.db.QueryRowContext(ctx,
+			`SELECT id FROM thoughts WHERE unique_id = ?`, srcUID).Scan(&srcID)
+		if err != nil {
+			return nil, fmt.Errorf("find source %s: %w", srcUID, err)
+		}
+
+		edgeUID := uuid.New().String()
+		_, err = s.db.ExecContext(ctx,
+			`INSERT OR IGNORE INTO refined_thoughts (unique_id, source_thought_id, target_thought_id, instance_id)
+			 VALUES (?, ?, ?, ?)`,
+			edgeUID, srcID, targetID, instanceID)
+		if err != nil {
+			return nil, fmt.Errorf("insert edge: %w", err)
+		}
+
+		_, err = s.db.ExecContext(ctx,
+			`UPDATE thoughts SET state = ? WHERE id = ? AND state = ?`,
+			StateRefined, srcID, StateActive)
+		if err != nil {
+			return nil, fmt.Errorf("mark source refined: %w", err)
+		}
+	}
+
+	// Attach metadata
+	for _, m := range metadata {
+		if err := s.AddThoughtMetadata(ctx, summary.ID, m.Type, m.Value, instanceID); err != nil {
+			return nil, fmt.Errorf("attach metadata: %w", err)
+		}
+	}
+	summary.Metadata = metadata
+
+	return summary, nil
 }
 
 // List returns recent thoughts.
