@@ -280,3 +280,44 @@ func TestMigrateCreatesMetadataTables(t *testing.T) {
 		t.Fatal("expected unique constraint violation on duplicate metadata")
 	}
 }
+
+func TestForgetThoughtDeletesMetadata(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "forget-meta.db")
+	store, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	store.Migrate(ctx)
+	instID, _ := store.EnsureInstance(ctx, "test", "")
+	modelID, _ := store.EnsureModel(ctx, "test-model", "", 4)
+	store.SetActiveModel(ctx, modelID)
+
+	thought, _ := store.Insert(ctx, "tagged thought", []float32{0.1, 0.2, 0.3, 0.4}, "cli", instID, modelID)
+	store.AddThoughtMetadata(ctx, thought.ID, MetadataPerson, "Sarah", instID)
+	store.AddThoughtMetadata(ctx, thought.ID, MetadataTag, "meeting", instID)
+
+	// Verify metadata exists
+	var count int
+	store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM thought_metadata`).Scan(&count)
+	if count != 2 {
+		t.Fatalf("expected 2 metadata rows before forget, got %d", count)
+	}
+
+	if err := store.ForgetThought(ctx, thought.ID); err != nil {
+		t.Fatalf("ForgetThought: %v", err)
+	}
+
+	// Metadata associations should be deleted
+	store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM thought_metadata`).Scan(&count)
+	if count != 0 {
+		t.Fatalf("expected 0 metadata rows after forget, got %d", count)
+	}
+
+	// The metadata labels should still exist (they're content-addressed, shared)
+	store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM metadata`).Scan(&count)
+	if count != 2 {
+		t.Fatalf("expected 2 metadata labels to remain, got %d", count)
+	}
+}

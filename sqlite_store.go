@@ -691,6 +691,12 @@ func (s *SQLiteStore) ForgetThought(ctx context.Context, uniqueID string) error 
 		return fmt.Errorf("delete embeddings: %w", err)
 	}
 
+	_, err = tx.ExecContext(ctx,
+		`DELETE FROM thought_metadata WHERE thought_id = ?`, thoughtID)
+	if err != nil {
+		return fmt.Errorf("delete thought metadata: %w", err)
+	}
+
 	return tx.Commit()
 }
 
