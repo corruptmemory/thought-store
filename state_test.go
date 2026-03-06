@@ -84,6 +84,40 @@ func TestVecIndexRemove(t *testing.T) {
 	}
 }
 
+func TestMigrateAddsStateColumn(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "migrate-state.db")
+	store, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Insert a thought and check default
+	instID, _ := store.EnsureInstance(ctx, "test", "")
+	modelID, _ := store.EnsureModel(ctx, "test-model", "", 4)
+	store.SetActiveModel(ctx, modelID)
+
+	thought, err := store.Insert(ctx, "test thought", []float32{0.1, 0.2, 0.3, 0.4}, "cli", instID, modelID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var state int
+	err = store.db.QueryRowContext(ctx,
+		`SELECT state FROM thoughts WHERE unique_id = ?`, thought.ID).Scan(&state)
+	if err != nil {
+		t.Fatalf("select state: %v", err)
+	}
+	if state != 0 {
+		t.Fatalf("expected state=0 (active), got %d", state)
+	}
+}
+
 func TestThoughtStateUnmarshalText(t *testing.T) {
 	tests := []struct {
 		text string

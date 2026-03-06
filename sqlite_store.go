@@ -79,6 +79,7 @@ func (s *SQLiteStore) Migrate(ctx context.Context) error {
 			content     TEXT NOT NULL,
 			source_id   INTEGER NOT NULL REFERENCES sources(id),
 			instance_id INTEGER NOT NULL REFERENCES instances(id),
+			state       INTEGER NOT NULL DEFAULT 0,
 			created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 		)`,
 		`CREATE TABLE IF NOT EXISTS embeddings (
@@ -94,6 +95,9 @@ func (s *SQLiteStore) Migrate(ctx context.Context) error {
 			return fmt.Errorf("migrate: %w", err)
 		}
 	}
+
+	// Add state column to existing databases (idempotent — fails silently if column exists)
+	s.db.ExecContext(ctx, `ALTER TABLE thoughts ADD COLUMN state INTEGER NOT NULL DEFAULT 0`)
 
 	// Seed sources
 	for _, name := range []string{"web", "cli", "mcp", "seed", "conversation"} {
