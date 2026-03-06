@@ -316,3 +316,59 @@ func TestTransitiveSync(t *testing.T) {
 	_ = dbPathA
 	_ = modelC
 }
+
+func TestImportModelMismatch(t *testing.T) {
+	ctx := context.Background()
+
+	// Machine A uses model "alpha"
+	dbPathA := filepath.Join(t.TempDir(), "a.db")
+	storeA, err := NewSQLiteStore(dbPathA)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore A: %v", err)
+	}
+	defer storeA.Close()
+	storeA.Migrate(ctx)
+	instA, _ := storeA.EnsureInstance(ctx, "alpha-machine", "")
+	modelA, _ := storeA.EnsureModel(ctx, "model-alpha", "", 4)
+	storeA.SetActiveModel(ctx, modelA)
+	storeA.Insert(ctx, "alpha thought", []float32{0.1, 0.2, 0.3, 0.4}, "cli", instA, modelA)
+
+	// Machine B uses model "beta"
+	dbPathB := filepath.Join(t.TempDir(), "b.db")
+	storeB, err := NewSQLiteStore(dbPathB)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore B: %v", err)
+	}
+	defer storeB.Close()
+	storeB.Migrate(ctx)
+	instB, _ := storeB.EnsureInstance(ctx, "beta-machine", "")
+	modelB, _ := storeB.EnsureModel(ctx, "model-beta", "", 4)
+	storeB.SetActiveModel(ctx, modelB)
+
+	// Export A, import into B
+	bundlePath := filepath.Join(t.TempDir(), "bundle.tar.zst")
+	f, _ := os.Create(bundlePath)
+	ExportBundle(ctx, storeA, dbPathA, f)
+	f.Close()
+
+	uidB, _ := storeB.InstanceUID(ctx, instB)
+	in, _ := os.Open(bundlePath)
+	defer in.Close()
+	result, err := ImportBundle(ctx, storeB, uidB, modelB, in)
+	if err != nil {
+		t.Fatalf("ImportBundle: %v", err)
+	}
+
+	if result.NewThoughts != 1 {
+		t.Fatalf("expected 1 new thought, got %d", result.NewThoughts)
+	}
+	if result.ReembedQueued != 1 {
+		t.Fatalf("expected 1 queued for re-embed, got %d", result.ReembedQueued)
+	}
+
+	// Verify thought exists but has no embedding for the local model
+	ids, _, _ := storeB.LoadEmbeddings(ctx, modelB)
+	if len(ids) != 0 {
+		t.Fatalf("expected 0 embeddings for local model, got %d", len(ids))
+	}
+}
