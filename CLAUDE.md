@@ -85,6 +85,18 @@ Integration tests against real Postgres and Ollama (no mocks). Tests skip gracef
 - `service_linux_test.go` — unit file path generation, systemctl show output parsing
 - `setup_test.go` — package manager detection, install command generation, config file checks
 
+## Future direction: SQLite + distributed sync
+
+The project is moving from Postgres to SQLite (`modernc.org/sqlite`, pure Go) to enable a distributed, sync-capable architecture. See `docs/plans/2026-03-05-sqlite-migration-design.md` for the full design.
+
+- **SQLite over Postgres**: eliminates server dependency, enables single-file portable brains, simplifies setup to zero infrastructure. WAL mode for concurrent reads, single-writer serialization.
+- **In-process vector search**: `viterin/vek` (SIMD-accelerated, pure Go) for brute-force cosine similarity. In-memory index rebuilt from SQLite on startup. At 100K×1024d with AVX2, search is single-digit milliseconds.
+- **Schema redesign**: integer PKs (human-readable) + UUIDs (sync identity). Separate tables for `sources` (capture mechanism: web/cli/mcp), `instances` (provenance: which machine), `models` (embedding model metadata), `embeddings` (decoupled from thoughts, supports model transitions), `active_model` (single-row, FK-constrained).
+- **Sync bundles** (future): compressed SQLite DB + content-addressed asset blobs. Import by `unique_id`, preserve original source and instance provenance. Sync is transparent — not a capture mechanism, just transport.
+- **Re-vectorize on import** (future): if local model differs from source, imported thoughts get re-embedded.
+- **Rich media** (future): supplemental files, images, data sets, code snippets, audio, video, calendar data — stored as content-addressed blobs alongside the SQLite DB.
+- **Memory optimization** (future): at >1M thoughts (~4GB index), explore mmap, float16 quantization, or disk-backed ANN index.
+
 ## Config
 
 `thought-store.toml` with sections: `[server]`, `[database]`, `[ollama]`, `[mcp]`, `[mdns]`.
