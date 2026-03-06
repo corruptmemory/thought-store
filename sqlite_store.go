@@ -247,6 +247,21 @@ func (s *SQLiteStore) AddThoughtMetadata(ctx context.Context, thoughtUID string,
 	return nil
 }
 
+// RemoveThoughtMetadata removes the association between a thought and a metadata label.
+// The metadata label itself is preserved (content-addressed, shared).
+// No error if the association doesn't exist.
+func (s *SQLiteStore) RemoveThoughtMetadata(ctx context.Context, thoughtUID string, mt MetadataType, value string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM thought_metadata
+		 WHERE thought_id = (SELECT id FROM thoughts WHERE unique_id = ?)
+		   AND metadata_id = (SELECT id FROM metadata WHERE metadata_type = ? AND value = ?)`,
+		thoughtUID, mt, value)
+	if err != nil {
+		return fmt.Errorf("remove thought metadata: %w", err)
+	}
+	return nil
+}
+
 // LoadThoughtMetadata returns metadata entries grouped by thought unique_id.
 func (s *SQLiteStore) LoadThoughtMetadata(ctx context.Context, thoughtUIDs []string) (map[string][]ThoughtMetadataEntry, error) {
 	result := make(map[string][]ThoughtMetadataEntry)
