@@ -2,6 +2,7 @@
 addr = ":3000"
 
 [database]
+path = "thought-store.db"
 url = "postgres://thoughtstore:thoughtstore@localhost/thoughtstore?sslmode=disable"
 
 [ollama]

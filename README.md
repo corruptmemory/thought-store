@@ -4,13 +4,13 @@ A personal thought capture and semantic search system. Record thoughts from anyw
 
 Inspired by Nate Jones's [Open Brain build guide](https://promptkit.natebjones.com/20260224_uq1_guide_main) and [PromptKit Prompt 1](https://promptkit.natebjones.com/20260224_uq1_promptkit_1) (memory seed migration).
 
-Nate's Open Brain runs on cloud free tiers (Supabase + OpenRouter + Slack). This project takes the same core idea — Postgres/pgvector storage, cosine similarity search, MCP integration, and the same 4-tool interface — but runs entirely self-hosted: local Postgres, local Ollama for embeddings, single Go binary, no internet required. Tailscale provides remote access when needed.
+Nate's Open Brain runs on cloud free tiers (Supabase + OpenRouter + Slack). This project takes the same core idea — SQLite storage with in-memory vector search, cosine similarity search, MCP integration, and the same 4-tool interface — but runs entirely self-hosted: local SQLite, local Ollama for embeddings, single Go binary, no internet required. Tailscale provides remote access when needed.
 
 ## What it does
 
 - **Capture** thoughts as plain text from a chat-like web UI, CLI, or JSON API
 - **Embed** each thought into a 1024-dimensional vector via local Ollama (mxbai-embed-large)
-- **Store** text + vector in Postgres with pgvector
+- **Store** text + vector in SQLite
 - **Search** by meaning using cosine similarity — "why Go?" finds thoughts about performance philosophy
 
 ## Stack
@@ -18,15 +18,15 @@ Nate's Open Brain runs on cloud free tiers (Supabase + OpenRouter + Slack). This
 Single Go binary. No npm, no node, no containers required.
 
 - **Go** with chi router, templ templates, htmx
-- **Postgres** with pgvector extension
+- **SQLite** (via modernc.org/sqlite, pure Go, no CGO)
+- **In-memory SIMD vector search** (viterin/vek)
 - **Ollama** running locally with mxbai-embed-large
-- **CLI** via go-flags with `serve`, `capture`, `search`, `mcp`, `re-embed`, `scan`, `service`, `setup` subcommands
+- **CLI** via go-flags with `serve`, `capture`, `search`, `mcp`, `re-embed`, `scan`, `service`, `setup`, `migrate-from-postgres` subcommands
 - **MCP** server for native Claude Code integration (stdio transport)
 
 ## Prerequisites
 
 - Go 1.22+
-- Postgres with pgvector extension enabled
 - Ollama with `mxbai-embed-large` model pulled
 - templ CLI (`go install github.com/a-h/templ/cmd/templ@latest`)
 
@@ -39,7 +39,7 @@ cd thought-store
 ./build.sh --refresh-htmx
 ./build.sh build
 
-# Interactive guided setup (checks Postgres, Ollama, provisions DB, writes config)
+# Interactive guided setup (checks Ollama, writes config)
 ./thought-store setup
 
 # Or manually edit config
@@ -49,7 +49,7 @@ $EDITOR thought-store.toml
 ./thought-store serve --config thought-store.toml
 ```
 
-The `setup` wizard detects your package manager (pacman/yay/paru/brew), checks for Postgres and Ollama, offers to install missing dependencies, provisions the database (user, DB, pgvector extension), and generates `thought-store.toml`.
+The `setup` wizard detects your package manager (pacman/yay/paru/brew), checks for Ollama, offers to install missing dependencies, and generates `thought-store.toml`. SQLite requires no provisioning — the database file is created automatically on first run.
 
 Open http://localhost:3000 for the web UI.
 
@@ -155,7 +155,7 @@ curl 'http://localhost:3000/api/thoughts?limit=20'
 # Live reload
 air
 
-# Run tests (requires Postgres and Ollama running)
+# Run tests (requires Ollama running for integration tests)
 ./build.sh test
 ```
 
@@ -168,7 +168,7 @@ air
 addr = ":3000"
 
 [database]
-url = "postgres://thoughtstore:thoughtstore@localhost/thoughtstore?sslmode=disable"
+path = "thought-store.db"
 
 [ollama]
 url = "http://localhost:11434"
@@ -230,9 +230,22 @@ Then register with the `--remote` flag:
 
 The remote client tries each URL in order. Put localhost first for zero-latency when on the same machine, Tailscale IP last as the universal fallback.
 
+## Migrating from Postgres
+
+If you have an existing Postgres-based thought store:
+
+```bash
+./thought-store migrate-from-postgres \
+  --postgres-url "postgres://thoughtstore:thoughtstore@localhost/thoughtstore?sslmode=disable" \
+  --config thought-store.toml
+```
+
+This reads all thoughts and embeddings from Postgres and writes them to the SQLite database. The Postgres database is not modified.
+
 ## Design principles
 
 - **Self-hosted**: Your thoughts stay on your machine. No cloud, no rent.
 - **Single binary**: Build once, deploy anywhere. All assets embedded.
 - **Simple**: No abstractions beyond what's needed. Anti-clever by design.
+- **Portable**: SQLite file = your entire brain. Copy it, sync it, back it up.
 - **Honest retrieval**: The store is only as useful as you are truthful with it.

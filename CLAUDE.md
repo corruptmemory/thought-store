@@ -2,7 +2,7 @@
 
 ## Project overview
 
-Personal thought capture and semantic search system. Single Go binary with web UI, CLI, and JSON API. Stores thoughts in Postgres with pgvector embeddings from local Ollama.
+Personal thought capture and semantic search system. Single Go binary with web UI, CLI, and JSON API. Stores thoughts in SQLite with in-memory SIMD vector search, embeddings from local Ollama.
 
 ## Inspiration
 
@@ -41,11 +41,13 @@ Always use `./build.sh` — never invoke `go build`, `go test`, or `templ genera
 main.go          CLI entrypoint (go-flags: serve, capture, search, mcp, re-embed, scan, service, setup)
 config.go        TOML config loading
 server.go        Chi router, API handlers with htmx content negotiation
-brain.go         ThoughtStore interface, LocalBrain (direct Postgres+Ollama)
+brain.go         ThoughtStore interface, LocalBrain (direct SQLite+Ollama)
 remote.go        RemoteBrain (HTTP client with URL fallback chain)
 mcp.go           MCP server setup (5 tools: capture, search, list, stats, diagnostics)
 diagnostics.go   Diagnostic report types, BrainMode enum, NetworkType classifier
-store.go         Postgres + pgvector (insert, list, cosine search)
+sqlite_store.go   SQLite store (insert, list, search, embeddings)
+vecindex.go      SIMD-accelerated in-memory vector index (viterin/vek)
+migrate_pg.go    Postgres-to-SQLite migration tool
 ollama.go        Ollama embedding client (/api/embeddings endpoint)
 mdns.go          mDNS service advertisement and discovery (hashicorp/mdns)
 service.go       Platform-agnostic ServiceManager interface and types
@@ -62,8 +64,8 @@ static/          CSS (tokens.css, app.css) and vendored htmx
 - **Content negotiation**: Handlers check `HX-Request` header. htmx gets HTML fragments, API clients get JSON.
 - **Form + JSON**: `handleCapture` accepts both `application/x-www-form-urlencoded` (web UI) and `application/json` (CLI/API).
 - **X-Source header**: Thoughts are tagged with source (`web`, `cli`, `seed`, `conversation`) for provenance.
-- **pgvector registration**: `pgxvec.RegisterTypes` in pool's `AfterConnect` hook ensures every connection handles vector types.
-- **ThoughtStore interface**: Both HTTP server and MCP server consume the same interface. LocalBrain talks directly to Postgres+Ollama; RemoteBrain talks HTTP with a URL fallback chain.
+- **ThoughtStore interface**: Both HTTP server and MCP server consume the same interface. LocalBrain talks directly to SQLite+Ollama; RemoteBrain talks HTTP with a URL fallback chain.
+- **In-memory vector index**: On startup, all embeddings for the active model are loaded into memory. Search uses SIMD-accelerated cosine similarity via viterin/vek. Capture appends to the index.
 - **MCP subcommand**: `./thought-store mcp` speaks stdio MCP for Claude Code. `--remote` flag switches from LocalBrain to RemoteBrain.
 - **Diagnostics**: `Diagnostics(ctx)` on the interface returns a structured report. LocalBrain queries Postgres and Ollama directly; RemoteBrain fetches `/api/diagnostics` and nests the server's report. `BrainMode` is a fake enum with `String()` and `MarshalText()`.
 - **Re-embed**: `./thought-store re-embed` re-vectorizes all thoughts using the current Ollama model. Dry-run by default; `--apply` to execute. Uses Ollama's `/api/embed` batch endpoint (50 texts/call by default, tunable via `--batch-size`).
@@ -73,7 +75,7 @@ static/          CSS (tokens.css, app.css) and vendored htmx
 
 ## Tests
 
-Integration tests against real Postgres and Ollama (no mocks). Tests skip gracefully if services unavailable.
+Integration tests against real Ollama (no mocks). SQLite tests use t.TempDir() for isolation. Tests skip gracefully if Ollama is unavailable.
 
 - `ollama_test.go` — embedding dimension and non-zero check
 - `store_test.go` — insert/list/search round-trip
@@ -99,7 +101,7 @@ The project is moving from Postgres to SQLite (`modernc.org/sqlite`, pure Go) to
 
 ## Config
 
-`thought-store.toml` with sections: `[server]`, `[database]`, `[ollama]`, `[mcp]`, `[mdns]`.
+`thought-store.toml` with sections: `[server]`, `[database]` (`path = "thought-store.db"`), `[ollama]`, `[mcp]`, `[mdns]`.
 
 ## Dependencies
 
@@ -107,8 +109,10 @@ The project is moving from Postgres to SQLite (`modernc.org/sqlite`, pure Go) to
 - `github.com/a-h/templ` — type-safe HTML templates
 - `github.com/jessevdk/go-flags` — CLI parsing
 - `github.com/BurntSushi/toml` — config
-- `github.com/jackc/pgx/v5` — Postgres driver
-- `github.com/pgvector/pgvector-go` — pgvector support
+- `modernc.org/sqlite` — pure Go SQLite driver
+- `github.com/viterin/vek` — SIMD-accelerated vector operations
+- `github.com/google/uuid` — UUID generation
+- `github.com/jackc/pgx/v5`, `github.com/pgvector/pgvector-go` — used by migrate-from-postgres tool
 - `github.com/mark3labs/mcp-go` — MCP server (stdio transport)
 - `github.com/hashicorp/mdns` — mDNS service advertisement and discovery
 - `github.com/charmbracelet/huh` — interactive terminal forms
