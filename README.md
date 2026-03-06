@@ -21,8 +21,9 @@ Single Go binary. No npm, no node, no containers required.
 - **SQLite** (via modernc.org/sqlite, pure Go, no CGO)
 - **In-memory SIMD vector search** (viterin/vek)
 - **Ollama** running locally with mxbai-embed-large
-- **CLI** via go-flags with `serve`, `capture`, `search`, `mcp`, `re-embed`, `scan`, `service`, `setup` subcommands
+- **CLI** via go-flags with `serve`, `capture`, `search`, `mcp`, `re-embed`, `scan`, `service`, `setup`, `sync` subcommands
 - **MCP** server for native Claude Code integration (stdio transport)
+- **Distributed sync** — gossip-style peer-to-peer snapshot exchange via zstd-compressed tarballs
 
 ## Prerequisites
 
@@ -134,6 +135,26 @@ sudo ./thought-store service install --config thought-store.toml --system
 ./thought-store service uninstall
 ```
 
+### Sync
+
+Synchronize thoughts between machines using gossip-style snapshot exchange:
+
+```bash
+# Pull thoughts from a peer
+./thought-store sync pull --from http://other-machine:3000
+
+# Push thoughts to a peer
+./thought-store sync push --to http://other-machine:3000
+```
+
+Sync is idempotent, commutative, and transitive — order doesn't matter, duplicates are skipped, and thoughts flow transitively through any chain of peers. Each thought has a UUID; append-only design makes this a CRDT by construction.
+
+### Thought State
+
+Thoughts have a lifecycle state: **active** (default, included in search), **refined** (rolled up into a summary, hidden from default queries), or **forgotten** (destructive tombstone — content erased, UUID preserved).
+
+Forgetting propagates through sync: if a peer forgets a thought, pulling from that peer forgets it locally too. Forgotten thoughts can never be recovered, but you can always re-capture the same idea (new UUID).
+
 ### API
 
 ```bash
@@ -147,6 +168,13 @@ curl 'http://localhost:3000/api/search?q=some+query'
 
 # List recent
 curl 'http://localhost:3000/api/thoughts?limit=20'
+
+# Sync — download snapshot bundle
+curl -o brain.tar.zst http://localhost:3000/api/sync
+
+# Sync — upload snapshot bundle
+curl -X POST http://localhost:3000/api/sync \
+  --data-binary @brain.tar.zst
 ```
 
 ## Development
