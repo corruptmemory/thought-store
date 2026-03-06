@@ -15,6 +15,7 @@ type ThoughtStore interface {
 	Stats(ctx context.Context) (*StoreStats, error)
 	Diagnostics(ctx context.Context) (*DiagnosticsReport, error)
 	UpdateThoughtMetadata(ctx context.Context, thoughtUID string, deletes, adds []ThoughtMetadataEntry) (*Thought, error)
+	RefineThoughts(ctx context.Context, sourceUIDs []string, content string, metadata []ThoughtMetadataEntry, source string) (*Thought, error)
 }
 
 var _ ThoughtStore = (*LocalBrain)(nil)
@@ -101,6 +102,23 @@ func (b *LocalBrain) Stats(ctx context.Context) (*StoreStats, error) {
 
 func (b *LocalBrain) UpdateThoughtMetadata(ctx context.Context, thoughtUID string, deletes, adds []ThoughtMetadataEntry) (*Thought, error) {
 	return b.store.UpdateMetadata(ctx, thoughtUID, deletes, adds, b.instanceID)
+}
+
+func (b *LocalBrain) RefineThoughts(ctx context.Context, sourceUIDs []string, content string, metadata []ThoughtMetadataEntry, source string) (*Thought, error) {
+	embedding, err := b.ollama.Embed(ctx, content)
+	if err != nil {
+		return nil, err
+	}
+	summary, err := b.store.RefineThoughts(ctx, sourceUIDs, content, embedding, metadata, source, b.instanceID, b.modelID)
+	if err != nil {
+		return nil, err
+	}
+	// Update VecIndex: remove sources, add summary
+	for _, uid := range sourceUIDs {
+		b.vecIndex.Remove(uid)
+	}
+	b.vecIndex.Add(summary.ID, embedding)
+	return summary, nil
 }
 
 func (b *LocalBrain) Diagnostics(ctx context.Context) (*DiagnosticsReport, error) {

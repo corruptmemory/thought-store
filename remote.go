@@ -201,6 +201,34 @@ func (b *RemoteBrain) UpdateThoughtMetadata(ctx context.Context, thoughtUID stri
 	return &t, nil
 }
 
+func (b *RemoteBrain) RefineThoughts(ctx context.Context, sourceUIDs []string, content string, metadata []ThoughtMetadataEntry, source string) (*Thought, error) {
+	type refineRequest struct {
+		SourceIDs []string               `json:"source_ids"`
+		Content   string                 `json:"content"`
+		Metadata  []ThoughtMetadataEntry `json:"metadata,omitempty"`
+	}
+	body, _ := json.Marshal(refineRequest{SourceIDs: sourceUIDs, Content: content, Metadata: metadata})
+	resp, err := b.doRequest(ctx, "POST", "/api/thoughts/refine", bytes.NewReader(body), http.Header{
+		"Content-Type": {"application/json"},
+		"X-Source":     {source},
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		msg, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("refine failed (%d): %s", resp.StatusCode, msg)
+	}
+
+	var t Thought
+	if err := json.NewDecoder(resp.Body).Decode(&t); err != nil {
+		return nil, fmt.Errorf("decode thought: %w", err)
+	}
+	return &t, nil
+}
+
 // doRequest tries each URL in the fallback chain until one responds.
 func (b *RemoteBrain) doRequest(ctx context.Context, method, path string, body io.Reader, headers http.Header) (*http.Response, error) {
 	var lastErr error

@@ -95,6 +95,24 @@ func newMCPServer(brain ThoughtStore) *server.MCPServer {
 		updateMetadataHandler(brain),
 	)
 
+	srv.AddTool(
+		mcp.NewTool("refine_thoughts",
+			mcp.WithDescription("Refine multiple thoughts into a summary. Sources are marked as refined and drop out of search. Creates a new thought with the summary content."),
+			mcp.WithString("source_ids",
+				mcp.Description("JSON array of source thought UUIDs to refine"),
+				mcp.Required(),
+			),
+			mcp.WithString("content",
+				mcp.Description("The refined/summary thought content"),
+				mcp.Required(),
+			),
+			mcp.WithString("metadata",
+				mcp.Description(`Optional metadata as JSON array of {"type":"person|date|tag|action_item","value":"..."} objects`),
+			),
+		),
+		refineHandler(brain),
+	)
+
 	return srv
 }
 
@@ -201,6 +219,42 @@ func updateMetadataHandler(brain ThoughtStore) server.ToolHandlerFunc {
 		thought, err := brain.UpdateThoughtMetadata(ctx, thoughtID, deletes, adds)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("update failed: %v", err)), nil
+		}
+
+		data, _ := json.Marshal(thought)
+		return mcp.NewToolResultText(string(data)), nil
+	}
+}
+
+func refineHandler(brain ThoughtStore) server.ToolHandlerFunc {
+	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		sourceIDsJSON := mcp.ParseString(request, "source_ids", "")
+		if sourceIDsJSON == "" {
+			return mcp.NewToolResultError("source_ids is required"), nil
+		}
+		var sourceIDs []string
+		if err := json.Unmarshal([]byte(sourceIDsJSON), &sourceIDs); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("invalid source_ids JSON: %v", err)), nil
+		}
+		if len(sourceIDs) == 0 {
+			return mcp.NewToolResultError("source_ids must not be empty"), nil
+		}
+
+		content := mcp.ParseString(request, "content", "")
+		if content == "" {
+			return mcp.NewToolResultError("content is required"), nil
+		}
+
+		var metadata []ThoughtMetadataEntry
+		if metaJSON := mcp.ParseString(request, "metadata", ""); metaJSON != "" {
+			if err := json.Unmarshal([]byte(metaJSON), &metadata); err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("invalid metadata JSON: %v", err)), nil
+			}
+		}
+
+		thought, err := brain.RefineThoughts(ctx, sourceIDs, content, metadata, "conversation")
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("refine failed: %v", err)), nil
 		}
 
 		data, _ := json.Marshal(thought)

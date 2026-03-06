@@ -6,6 +6,14 @@ import (
 	"testing"
 )
 
+func TestRefineThoughtsViaInterface(t *testing.T) {
+	// Compile-time interface check: LocalBrain and RemoteBrain must satisfy ThoughtStore,
+	// which now includes RefineThoughts. The var _ lines in brain.go and remote.go
+	// enforce this at compile time; this test exists so the check is visible in test output.
+	var _ ThoughtStore = (*LocalBrain)(nil)
+	var _ ThoughtStore = (*RemoteBrain)(nil)
+}
+
 func TestMigrateCreatesRefinedThoughtsTable(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "migrate-refine.db")
