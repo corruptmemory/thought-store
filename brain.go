@@ -14,6 +14,7 @@ type ThoughtStore interface {
 	List(ctx context.Context, limit, offset int) ([]Thought, error)
 	Stats(ctx context.Context) (*StoreStats, error)
 	Diagnostics(ctx context.Context) (*DiagnosticsReport, error)
+	UpdateThoughtMetadata(ctx context.Context, thoughtUID string, deletes, adds []ThoughtMetadataEntry) (*Thought, error)
 }
 
 var _ ThoughtStore = (*LocalBrain)(nil)
@@ -96,6 +97,10 @@ func (b *LocalBrain) List(ctx context.Context, limit, offset int) ([]Thought, er
 
 func (b *LocalBrain) Stats(ctx context.Context) (*StoreStats, error) {
 	return b.store.Stats(ctx)
+}
+
+func (b *LocalBrain) UpdateThoughtMetadata(ctx context.Context, thoughtUID string, deletes, adds []ThoughtMetadataEntry) (*Thought, error) {
+	return b.store.UpdateMetadata(ctx, thoughtUID, deletes, adds, b.instanceID)
 }
 
 func (b *LocalBrain) Diagnostics(ctx context.Context) (*DiagnosticsReport, error) {

@@ -78,6 +78,23 @@ func newMCPServer(brain ThoughtStore) *server.MCPServer {
 		diagnosticsHandler(brain),
 	)
 
+	srv.AddTool(
+		mcp.NewTool("update_thought_metadata",
+			mcp.WithDescription("Update metadata on an existing thought. Deletes are applied before adds."),
+			mcp.WithString("thought_id",
+				mcp.Description("UUID of the thought to update"),
+				mcp.Required(),
+			),
+			mcp.WithString("delete",
+				mcp.Description(`JSON array of {"type":"person|date|tag|action_item","value":"..."} to remove`),
+			),
+			mcp.WithString("add",
+				mcp.Description(`JSON array of {"type":"person|date|tag|action_item","value":"..."} to add`),
+			),
+		),
+		updateMetadataHandler(brain),
+	)
+
 	return srv
 }
 
@@ -158,6 +175,35 @@ func diagnosticsHandler(brain ThoughtStore) server.ToolHandlerFunc {
 		}
 
 		data, _ := json.Marshal(report)
+		return mcp.NewToolResultText(string(data)), nil
+	}
+}
+
+func updateMetadataHandler(brain ThoughtStore) server.ToolHandlerFunc {
+	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		thoughtID := mcp.ParseString(request, "thought_id", "")
+		if thoughtID == "" {
+			return mcp.NewToolResultError("thought_id is required"), nil
+		}
+
+		var deletes, adds []ThoughtMetadataEntry
+		if deleteJSON := mcp.ParseString(request, "delete", ""); deleteJSON != "" {
+			if err := json.Unmarshal([]byte(deleteJSON), &deletes); err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("invalid delete JSON: %v", err)), nil
+			}
+		}
+		if addJSON := mcp.ParseString(request, "add", ""); addJSON != "" {
+			if err := json.Unmarshal([]byte(addJSON), &adds); err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("invalid add JSON: %v", err)), nil
+			}
+		}
+
+		thought, err := brain.UpdateThoughtMetadata(ctx, thoughtID, deletes, adds)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("update failed: %v", err)), nil
+		}
+
+		data, _ := json.Marshal(thought)
 		return mcp.NewToolResultText(string(data)), nil
 	}
 }

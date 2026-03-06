@@ -39,6 +39,7 @@ func NewServer(brain ThoughtStore) *Server {
 	s.router.Get("/api/search", s.handleSearch)
 	s.router.Get("/api/stats", s.handleStats)
 	s.router.Get("/api/diagnostics", s.handleDiagnostics)
+	s.router.Patch("/api/thoughts/{uuid}/metadata", s.handleUpdateMetadata)
 
 	// Sync routes
 	s.router.Get("/api/sync", s.handleSyncExport)
@@ -215,6 +216,32 @@ func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(report)
+}
+
+func (s *Server) handleUpdateMetadata(w http.ResponseWriter, r *http.Request) {
+	uid := chi.URLParam(r, "uuid")
+	if uid == "" {
+		http.Error(w, "uuid is required", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		Delete []ThoughtMetadataEntry `json:"delete,omitempty"`
+		Add    []ThoughtMetadataEntry `json:"add,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	thought, err := s.brain.UpdateThoughtMetadata(r.Context(), uid, req.Delete, req.Add)
+	if err != nil {
+		http.Error(w, "update failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(thought)
 }
 
 func (s *Server) handleSyncExport(w http.ResponseWriter, r *http.Request) {

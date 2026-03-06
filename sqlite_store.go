@@ -734,6 +734,27 @@ func (s *SQLiteStore) ForgetThought(ctx context.Context, uniqueID string) error 
 	return tx.Commit()
 }
 
+// UpdateMetadata performs delete-then-add on a thought's metadata.
+// Returns the thought with updated metadata populated.
+func (s *SQLiteStore) UpdateMetadata(ctx context.Context, thoughtUID string, deletes, adds []ThoughtMetadataEntry, instanceID int) (*Thought, error) {
+	for _, d := range deletes {
+		if err := s.RemoveThoughtMetadata(ctx, thoughtUID, d.Type, d.Value); err != nil {
+			return nil, fmt.Errorf("delete metadata: %w", err)
+		}
+	}
+	for _, a := range adds {
+		if err := s.AddThoughtMetadata(ctx, thoughtUID, a.Type, a.Value, instanceID); err != nil {
+			return nil, fmt.Errorf("add metadata: %w", err)
+		}
+	}
+
+	thoughts, err := s.GetByUniqueIDs(ctx, []string{thoughtUID})
+	if err != nil || len(thoughts) == 0 {
+		return nil, fmt.Errorf("find thought %s: %w", thoughtUID, err)
+	}
+	return &thoughts[0], nil
+}
+
 // encodeVector converts []float32 to raw bytes for BLOB storage.
 func encodeVector(v []float32) []byte {
 	buf := make([]byte, len(v)*4)

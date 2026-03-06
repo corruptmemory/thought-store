@@ -356,6 +356,48 @@ func TestCaptureWithMetadata(t *testing.T) {
 	}
 }
 
+func TestUpdateThoughtMetadata(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "update-meta.db")
+	store, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	store.Migrate(ctx)
+	instID, _ := store.EnsureInstance(ctx, "test", "")
+	modelID, _ := store.EnsureModel(ctx, "test-model", "", 4)
+	store.SetActiveModel(ctx, modelID)
+
+	thought, _ := store.Insert(ctx, "thought with metadata", []float32{0.1, 0.2, 0.3, 0.4}, "cli", instID, modelID)
+	store.AddThoughtMetadata(ctx, thought.ID, MetadataPerson, "Sarah", instID)
+	store.AddThoughtMetadata(ctx, thought.ID, MetadataTag, "wrong-tag", instID)
+
+	// Delete wrong-tag, add correct-tag — deletes first, then adds
+	deletes := []ThoughtMetadataEntry{{Type: MetadataTag, Value: "wrong-tag"}}
+	adds := []ThoughtMetadataEntry{
+		{Type: MetadataTag, Value: "correct-tag"},
+		{Type: MetadataTag, Value: "Go"},
+	}
+
+	updated, err := store.UpdateMetadata(ctx, thought.ID, deletes, adds, instID)
+	if err != nil {
+		t.Fatalf("UpdateMetadata: %v", err)
+	}
+
+	// Should have: person:Sarah, tag:correct-tag, tag:Go (3 entries)
+	if len(updated.Metadata) != 3 {
+		t.Fatalf("expected 3 metadata entries, got %d", len(updated.Metadata))
+	}
+
+	// Verify wrong-tag is gone
+	for _, m := range updated.Metadata {
+		if m.Value == "wrong-tag" {
+			t.Fatal("wrong-tag should have been deleted")
+		}
+	}
+}
+
 func TestForgetThoughtDeletesMetadata(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "forget-meta.db")
