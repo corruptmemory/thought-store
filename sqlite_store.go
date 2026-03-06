@@ -199,6 +199,50 @@ func (s *SQLiteStore) SourceID(ctx context.Context, name string) (int, error) {
 	return int(insertedID), nil
 }
 
+// EnsureMetadata creates or retrieves a metadata label.
+// Content-addressed: deduplicated by (metadata_type, value).
+func (s *SQLiteStore) EnsureMetadata(ctx context.Context, mt MetadataType, value string) (int, error) {
+	var id int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id FROM metadata WHERE metadata_type = ? AND value = ?`, mt, value).Scan(&id)
+	if err == nil {
+		return id, nil
+	}
+
+	res, err := s.db.ExecContext(ctx,
+		`INSERT INTO metadata (metadata_type, value) VALUES (?, ?)`, mt, value)
+	if err != nil {
+		return 0, fmt.Errorf("create metadata: %w", err)
+	}
+	insertedID, _ := res.LastInsertId()
+	return int(insertedID), nil
+}
+
+// AddThoughtMetadata associates a metadata label with a thought.
+// Creates the metadata label if it doesn't exist. Generates a UUID for the association.
+func (s *SQLiteStore) AddThoughtMetadata(ctx context.Context, thoughtUID string, mt MetadataType, value string, instanceID int) error {
+	metaID, err := s.EnsureMetadata(ctx, mt, value)
+	if err != nil {
+		return err
+	}
+
+	var thoughtID int
+	err = s.db.QueryRowContext(ctx,
+		`SELECT id FROM thoughts WHERE unique_id = ?`, thoughtUID).Scan(&thoughtID)
+	if err != nil {
+		return fmt.Errorf("find thought %s: %w", thoughtUID, err)
+	}
+
+	uid := uuid.New().String()
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO thought_metadata (unique_id, thought_id, metadata_id, instance_id) VALUES (?, ?, ?, ?)`,
+		uid, thoughtID, metaID, instanceID)
+	if err != nil {
+		return fmt.Errorf("add thought metadata: %w", err)
+	}
+	return nil
+}
+
 // Insert stores a thought with its embedding.
 func (s *SQLiteStore) Insert(ctx context.Context, content string, embedding []float32, source string, instanceID, modelID int) (*Thought, error) {
 	uid := uuid.New().String()

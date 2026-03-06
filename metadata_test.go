@@ -56,6 +56,73 @@ func TestMetadataTypeUnmarshalText(t *testing.T) {
 	}
 }
 
+func TestEnsureMetadataIdempotent(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "ensure-meta.db")
+	store, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	store.Migrate(ctx)
+
+	id1, err := store.EnsureMetadata(ctx, MetadataPerson, "Sarah")
+	if err != nil {
+		t.Fatalf("EnsureMetadata: %v", err)
+	}
+
+	id2, err := store.EnsureMetadata(ctx, MetadataPerson, "Sarah")
+	if err != nil {
+		t.Fatalf("EnsureMetadata second: %v", err)
+	}
+
+	if id1 != id2 {
+		t.Fatalf("expected same ID, got %d and %d", id1, id2)
+	}
+
+	// Different type, same value — should be different
+	id3, err := store.EnsureMetadata(ctx, MetadataTag, "Sarah")
+	if err != nil {
+		t.Fatalf("EnsureMetadata tag: %v", err)
+	}
+	if id3 == id1 {
+		t.Fatal("different type should produce different ID")
+	}
+}
+
+func TestAddThoughtMetadata(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "add-meta.db")
+	store, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	store.Migrate(ctx)
+	instID, _ := store.EnsureInstance(ctx, "test", "")
+	modelID, _ := store.EnsureModel(ctx, "test-model", "", 4)
+	store.SetActiveModel(ctx, modelID)
+
+	thought, _ := store.Insert(ctx, "met Sarah today", []float32{0.1, 0.2, 0.3, 0.4}, "cli", instID, modelID)
+
+	err = store.AddThoughtMetadata(ctx, thought.ID, MetadataPerson, "Sarah", instID)
+	if err != nil {
+		t.Fatalf("AddThoughtMetadata: %v", err)
+	}
+
+	err = store.AddThoughtMetadata(ctx, thought.ID, MetadataTag, "meeting", instID)
+	if err != nil {
+		t.Fatalf("AddThoughtMetadata tag: %v", err)
+	}
+
+	// Verify rows exist
+	var count int
+	store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM thought_metadata`).Scan(&count)
+	if count != 2 {
+		t.Fatalf("expected 2 thought_metadata rows, got %d", count)
+	}
+}
+
 func TestMigrateCreatesMetadataTables(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "migrate-meta.db")
