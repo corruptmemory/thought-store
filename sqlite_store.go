@@ -796,6 +796,52 @@ func (s *SQLiteStore) ForgetThought(ctx context.Context, uniqueID string) error 
 		return fmt.Errorf("delete thought metadata: %w", err)
 	}
 
+	// Delete refinement edges where this thought is a source
+	_, err = tx.ExecContext(ctx,
+		`DELETE FROM refined_thoughts WHERE source_thought_id = ?`, thoughtID)
+	if err != nil {
+		return fmt.Errorf("delete source edges: %w", err)
+	}
+
+	// If this thought is a summary (target), delete those edges
+	// and conditionally revert sources to active
+	rows, err := tx.QueryContext(ctx,
+		`SELECT source_thought_id FROM refined_thoughts WHERE target_thought_id = ?`, thoughtID)
+	if err != nil {
+		return fmt.Errorf("find target edges: %w", err)
+	}
+	var sourceIDs []int
+	for rows.Next() {
+		var srcID int
+		if err := rows.Scan(&srcID); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan source id: %w", err)
+		}
+		sourceIDs = append(sourceIDs, srcID)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("source ids: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx,
+		`DELETE FROM refined_thoughts WHERE target_thought_id = ?`, thoughtID)
+	if err != nil {
+		return fmt.Errorf("delete target edges: %w", err)
+	}
+
+	// Revert sources to active only if they have no remaining outgoing edges
+	for _, srcID := range sourceIDs {
+		_, err = tx.ExecContext(ctx,
+			`UPDATE thoughts SET state = ?
+			 WHERE id = ? AND state = ?
+			   AND NOT EXISTS (SELECT 1 FROM refined_thoughts WHERE source_thought_id = ?)`,
+			StateActive, srcID, StateRefined, srcID)
+		if err != nil {
+			return fmt.Errorf("revert source %d: %w", srcID, err)
+		}
+	}
+
 	return tx.Commit()
 }
 
