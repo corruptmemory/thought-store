@@ -99,8 +99,11 @@ func (s *SQLiteStore) Migrate(ctx context.Context) error {
 			unique_id   TEXT NOT NULL UNIQUE,
 			thought_id  INTEGER NOT NULL REFERENCES thoughts(id),
 			metadata_id INTEGER NOT NULL REFERENCES metadata(id),
-			instance_id INTEGER NOT NULL REFERENCES instances(id)
+			instance_id INTEGER NOT NULL REFERENCES instances(id),
+			UNIQUE(thought_id, metadata_id)
 		)`,
+		`CREATE INDEX IF NOT EXISTS idx_thought_metadata_thought_id ON thought_metadata(thought_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_thought_metadata_metadata_id ON thought_metadata(metadata_id)`,
 	}
 
 	for _, stmt := range statements {
@@ -220,6 +223,7 @@ func (s *SQLiteStore) EnsureMetadata(ctx context.Context, mt MetadataType, value
 
 // AddThoughtMetadata associates a metadata label with a thought.
 // Creates the metadata label if it doesn't exist. Generates a UUID for the association.
+// Idempotent: duplicate (thought_id, metadata_id) pairs are silently ignored.
 func (s *SQLiteStore) AddThoughtMetadata(ctx context.Context, thoughtUID string, mt MetadataType, value string, instanceID int) error {
 	metaID, err := s.EnsureMetadata(ctx, mt, value)
 	if err != nil {
@@ -235,7 +239,7 @@ func (s *SQLiteStore) AddThoughtMetadata(ctx context.Context, thoughtUID string,
 
 	uid := uuid.New().String()
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO thought_metadata (unique_id, thought_id, metadata_id, instance_id) VALUES (?, ?, ?, ?)`,
+		`INSERT OR IGNORE INTO thought_metadata (unique_id, thought_id, metadata_id, instance_id) VALUES (?, ?, ?, ?)`,
 		uid, thoughtID, metaID, instanceID)
 	if err != nil {
 		return fmt.Errorf("add thought metadata: %w", err)

@@ -7,8 +7,8 @@ import (
 )
 
 // BrainMode indicates whether the server is running with a local or remote brain.
-// IMPORTANT: These integer values are stored in the database.
-// Order must be preserved forever. You can only add new values, never delete or reorder.
+// IMPORTANT: These values are serialized in API responses.
+// Order should be preserved. You can only add new values, never delete or reorder.
 type BrainMode int
 
 const (
