@@ -227,7 +227,92 @@ func ImportBundle(ctx context.Context, store *SQLiteStore, myInstanceUID string,
 		return nil, fmt.Errorf("forgotten rows: %w", err)
 	}
 
+	// Step 5: Import metadata labels and associations
+	if err := importMetadata(ctx, store, foreignStore, instanceMap); err != nil {
+		return nil, fmt.Errorf("import metadata: %w", err)
+	}
+
 	return result, nil
+}
+
+// importMetadata imports metadata labels and thought_metadata associations from the foreign DB.
+func importMetadata(ctx context.Context, localStore, foreignStore *SQLiteStore, instanceMap map[string]int) error {
+	// Step 5a: Import metadata labels (content-addressed, dedup by type+value)
+	metaMap := make(map[int]int) // foreign metadata.id -> local metadata.id
+
+	metaRows, err := foreignStore.db.QueryContext(ctx,
+		`SELECT id, metadata_type, value FROM metadata`)
+	if err != nil {
+		return fmt.Errorf("query foreign metadata: %w", err)
+	}
+	defer metaRows.Close()
+
+	for metaRows.Next() {
+		var foreignID, mt int
+		var value string
+		if err := metaRows.Scan(&foreignID, &mt, &value); err != nil {
+			return fmt.Errorf("scan metadata: %w", err)
+		}
+		localID, err := localStore.EnsureMetadata(ctx, MetadataType(mt), value)
+		if err != nil {
+			return fmt.Errorf("ensure metadata: %w", err)
+		}
+		metaMap[foreignID] = localID
+	}
+	if err := metaRows.Err(); err != nil {
+		return fmt.Errorf("metadata rows: %w", err)
+	}
+
+	// Step 5b: Import thought_metadata associations (UUID-tracked)
+	tmRows, err := foreignStore.db.QueryContext(ctx,
+		`SELECT tm.unique_id, t.unique_id, tm.metadata_id, i.unique_id
+		 FROM thought_metadata tm
+		 JOIN thoughts t ON t.id = tm.thought_id
+		 JOIN instances i ON i.id = tm.instance_id`)
+	if err != nil {
+		return fmt.Errorf("query foreign thought_metadata: %w", err)
+	}
+	defer tmRows.Close()
+
+	for tmRows.Next() {
+		var tmUID, thoughtUID, instanceUID string
+		var foreignMetaID int
+		if err := tmRows.Scan(&tmUID, &thoughtUID, &foreignMetaID, &instanceUID); err != nil {
+			return fmt.Errorf("scan thought_metadata: %w", err)
+		}
+
+		// Skip if already imported
+		var exists int
+		if localStore.db.QueryRowContext(ctx,
+			`SELECT 1 FROM thought_metadata WHERE unique_id = ?`, tmUID).Scan(&exists) == nil {
+			continue
+		}
+
+		// Resolve local IDs
+		var localThoughtID int
+		if localStore.db.QueryRowContext(ctx,
+			`SELECT id FROM thoughts WHERE unique_id = ?`, thoughtUID).Scan(&localThoughtID) != nil {
+			continue // thought not imported
+		}
+
+		localMetaID, ok := metaMap[foreignMetaID]
+		if !ok {
+			continue
+		}
+
+		localInstanceID, ok := instanceMap[instanceUID]
+		if !ok {
+			continue
+		}
+
+		_, err := localStore.db.ExecContext(ctx,
+			`INSERT OR IGNORE INTO thought_metadata (unique_id, thought_id, metadata_id, instance_id) VALUES (?, ?, ?, ?)`,
+			tmUID, localThoughtID, localMetaID, localInstanceID)
+		if err != nil {
+			return fmt.Errorf("import thought_metadata %s: %w", tmUID, err)
+		}
+	}
+	return tmRows.Err()
 }
 
 // importInstances imports all foreign instances into the local DB.

@@ -400,6 +400,47 @@ func TestSyncPreservesRefinedState(t *testing.T) {
 	}
 }
 
+func TestSyncImportsMetadata(t *testing.T) {
+	ctx := context.Background()
+
+	storeA, dbPathA, instA, modelA := newTestStoreAt(t, "machine-A")
+	storeB, _, instB, modelB := newTestStoreAt(t, "machine-B")
+
+	// A captures a thought with metadata
+	thought, _ := storeA.Insert(ctx, "met Sarah about Go", []float32{0.1, 0.2, 0.3, 0.4}, "cli", instA, modelA)
+	storeA.AddThoughtMetadata(ctx, thought.ID, MetadataPerson, "Sarah", instA)
+	storeA.AddThoughtMetadata(ctx, thought.ID, MetadataTag, "Go", instA)
+
+	// B pulls from A
+	uidB, _ := storeB.InstanceUID(ctx, instB)
+	bundle := exportToFile(t, ctx, storeA, dbPathA)
+	result := importFromFile(t, ctx, storeB, uidB, modelB, bundle)
+	if result.NewThoughts != 1 {
+		t.Fatalf("expected 1 new thought, got %d", result.NewThoughts)
+	}
+
+	// B should have the metadata
+	meta, err := storeB.LoadThoughtMetadata(ctx, []string{thought.ID})
+	if err != nil {
+		t.Fatalf("LoadThoughtMetadata: %v", err)
+	}
+	entries := meta[thought.ID]
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 metadata entries, got %d", len(entries))
+	}
+
+	// Import again — should be idempotent
+	bundle2 := exportToFile(t, ctx, storeA, dbPathA)
+	importFromFile(t, ctx, storeB, uidB, modelB, bundle2)
+
+	// Still only 2 metadata associations
+	var count int
+	storeB.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM thought_metadata`).Scan(&count)
+	if count != 2 {
+		t.Fatalf("expected 2 thought_metadata rows after re-import, got %d", count)
+	}
+}
+
 func TestSyncPropagatesForgotten(t *testing.T) {
 	ctx := context.Background()
 
