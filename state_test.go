@@ -289,6 +289,32 @@ func TestForgetThought(t *testing.T) {
 	}
 }
 
+func TestImportThoughtWithState(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "import-state.db")
+	store, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	store.Migrate(ctx)
+	instID, _ := store.EnsureInstance(ctx, "test", "")
+	modelID, _ := store.EnsureModel(ctx, "test-model", "", 4)
+	store.SetActiveModel(ctx, modelID)
+
+	err = store.ImportThought(ctx, "uid-1", "refined thought", "cli", instID, modelID, nil, StateRefined, "2026-03-06T12:00:00.000Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var state int
+	store.db.QueryRowContext(ctx,
+		`SELECT state FROM thoughts WHERE unique_id = 'uid-1'`).Scan(&state)
+	if state != int(StateRefined) {
+		t.Fatalf("expected state=%d (refined), got %d", StateRefined, state)
+	}
+}
+
 func TestThoughtStateUnmarshalText(t *testing.T) {
 	tests := []struct {
 		text string

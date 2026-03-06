@@ -18,6 +18,7 @@ type ImportResult struct {
 	NewThoughts   int `json:"new_thoughts"`
 	Skipped       int `json:"skipped"`
 	ReembedQueued int `json:"reembed_queued"`
+	Forgotten     int `json:"forgotten"`
 }
 
 // ExportBundle creates a zstd-compressed tarball of the database.
@@ -121,13 +122,13 @@ func ImportBundle(ctx context.Context, store *SQLiteStore, myInstanceUID string,
 		foreignModelName == localModelName &&
 		foreignModelVersion == localModelVersion
 
-	// Step 3: Find candidate thoughts (not from my instance)
+	// Step 3: Find candidate thoughts (not from my instance, not forgotten)
 	rows, err := foreignStore.db.QueryContext(ctx,
-		`SELECT t.unique_id, t.content, src.name, i.unique_id, t.created_at
+		`SELECT t.unique_id, t.content, src.name, i.unique_id, t.created_at, t.state
 		 FROM thoughts t
 		 JOIN sources src ON src.id = t.source_id
 		 JOIN instances i ON i.id = t.instance_id
-		 WHERE i.unique_id != ?`, myInstanceUID)
+		 WHERE i.unique_id != ? AND t.state != ?`, myInstanceUID, StateForgotten)
 	if err != nil {
 		return nil, fmt.Errorf("query foreign thoughts: %w", err)
 	}
@@ -135,7 +136,8 @@ func ImportBundle(ctx context.Context, store *SQLiteStore, myInstanceUID string,
 
 	for rows.Next() {
 		var thoughtUID, content, sourceName, instanceUID, createdAt string
-		if err := rows.Scan(&thoughtUID, &content, &sourceName, &instanceUID, &createdAt); err != nil {
+		var foreignState int
+		if err := rows.Scan(&thoughtUID, &content, &sourceName, &instanceUID, &createdAt, &foreignState); err != nil {
 			return nil, fmt.Errorf("scan foreign thought: %w", err)
 		}
 
@@ -167,7 +169,7 @@ func ImportBundle(ctx context.Context, store *SQLiteStore, myInstanceUID string,
 			}
 		}
 
-		err := store.ImportThought(ctx, thoughtUID, content, sourceName, localInstanceID, localModelID, embedding, createdAt)
+		err := store.ImportThought(ctx, thoughtUID, content, sourceName, localInstanceID, localModelID, embedding, ThoughtState(foreignState), createdAt)
 		if err != nil {
 			return nil, fmt.Errorf("import thought %s: %w", thoughtUID, err)
 		}
@@ -181,7 +183,51 @@ func ImportBundle(ctx context.Context, store *SQLiteStore, myInstanceUID string,
 		}
 	}
 
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("foreign thoughts rows: %w", err)
+	}
+
+	// Step 4: Propagate forgotten state
+	forgottenRows, err := foreignStore.db.QueryContext(ctx,
+		`SELECT t.unique_id FROM thoughts t
+		 JOIN instances i ON i.id = t.instance_id
+		 WHERE t.state = ? AND i.unique_id != ?`,
+		StateForgotten, myInstanceUID)
+	if err != nil {
+		return nil, fmt.Errorf("query foreign forgotten: %w", err)
+	}
+	defer forgottenRows.Close()
+
+	for forgottenRows.Next() {
+		var thoughtUID string
+		if err := forgottenRows.Scan(&thoughtUID); err != nil {
+			return nil, fmt.Errorf("scan forgotten: %w", err)
+		}
+
+		// Check if we have this thought and it's not already forgotten
+		var localState int
+		err := store.db.QueryRowContext(ctx,
+			`SELECT state FROM thoughts WHERE unique_id = ?`, thoughtUID).Scan(&localState)
+		if err != nil {
+			continue // we don't have it locally
+		}
+		if localState == int(StateForgotten) {
+			continue // already forgotten
+		}
+
+		if err := store.ForgetThought(ctx, thoughtUID); err != nil {
+			return nil, fmt.Errorf("propagate forget %s: %w", thoughtUID, err)
+		}
+		result.Forgotten++
+		if vecIndex != nil {
+			vecIndex.Remove(thoughtUID)
+		}
+	}
+	if err := forgottenRows.Err(); err != nil {
+		return nil, fmt.Errorf("forgotten rows: %w", err)
+	}
+
+	return result, nil
 }
 
 // importInstances imports all foreign instances into the local DB.

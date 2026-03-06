@@ -483,7 +483,7 @@ func (s *SQLiteStore) ImportInstance(ctx context.Context, uniqueID, name, descri
 // ImportThought inserts a thought with a known unique_id, preserving created_at.
 // Skips silently if a thought with this unique_id already exists (idempotent).
 // If embedding is nil, the thought is imported without an embedding (queued for re-embed).
-func (s *SQLiteStore) ImportThought(ctx context.Context, uniqueID, content, source string, instanceID, modelID int, embedding []float32, createdAt string) error {
+func (s *SQLiteStore) ImportThought(ctx context.Context, uniqueID, content, source string, instanceID, modelID int, embedding []float32, state ThoughtState, createdAt string) error {
 	// Check if already exists
 	var exists int
 	err := s.db.QueryRowContext(ctx,
@@ -504,8 +504,8 @@ func (s *SQLiteStore) ImportThought(ctx context.Context, uniqueID, content, sour
 	defer tx.Rollback()
 
 	res, err := tx.ExecContext(ctx,
-		`INSERT INTO thoughts (unique_id, content, source_id, instance_id, created_at) VALUES (?, ?, ?, ?, ?)`,
-		uniqueID, content, sourceID, instanceID, createdAt)
+		`INSERT INTO thoughts (unique_id, content, source_id, instance_id, state, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		uniqueID, content, sourceID, instanceID, state, createdAt)
 	if err != nil {
 		return fmt.Errorf("import thought: %w", err)
 	}

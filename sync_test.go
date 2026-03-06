@@ -372,3 +372,80 @@ func TestImportModelMismatch(t *testing.T) {
 		t.Fatalf("expected 0 embeddings for local model, got %d", len(ids))
 	}
 }
+
+func TestSyncPreservesRefinedState(t *testing.T) {
+	ctx := context.Background()
+
+	storeA, dbPathA, instA, modelA := newTestStoreAt(t, "machine-A")
+	storeB, _, instB, modelB := newTestStoreAt(t, "machine-B")
+
+	// A captures a thought then marks it refined
+	thought, _ := storeA.Insert(ctx, "refined on A", []float32{0.1, 0.2, 0.3, 0.4}, "cli", instA, modelA)
+	storeA.db.ExecContext(ctx, `UPDATE thoughts SET state = ? WHERE unique_id = ?`, StateRefined, thought.ID)
+
+	// B pulls from A
+	uidB, _ := storeB.InstanceUID(ctx, instB)
+	bundle := exportToFile(t, ctx, storeA, dbPathA)
+	importFromFile(t, ctx, storeB, uidB, modelB, bundle)
+
+	// B should have the thought with refined state
+	var state int
+	err := storeB.db.QueryRowContext(ctx,
+		`SELECT state FROM thoughts WHERE unique_id = ?`, thought.ID).Scan(&state)
+	if err != nil {
+		t.Fatalf("query state: %v", err)
+	}
+	if state != int(StateRefined) {
+		t.Fatalf("expected state=%d (refined), got %d", StateRefined, state)
+	}
+}
+
+func TestSyncPropagatesForgotten(t *testing.T) {
+	ctx := context.Background()
+
+	storeA, dbPathA, instA, modelA := newTestStoreAt(t, "machine-A")
+	storeB, _, instB, modelB := newTestStoreAt(t, "machine-B")
+
+	// A captures a thought
+	thought, _ := storeA.Insert(ctx, "will be forgotten", []float32{0.1, 0.2, 0.3, 0.4}, "cli", instA, modelA)
+
+	// B pulls from A — gets the thought
+	uidB, _ := storeB.InstanceUID(ctx, instB)
+	bundleA := exportToFile(t, ctx, storeA, dbPathA)
+	result := importFromFile(t, ctx, storeB, uidB, modelB, bundleA)
+	if result.NewThoughts != 1 {
+		t.Fatalf("expected 1 new thought, got %d", result.NewThoughts)
+	}
+
+	// A forgets the thought
+	if err := storeA.ForgetThought(ctx, thought.ID); err != nil {
+		t.Fatalf("ForgetThought: %v", err)
+	}
+
+	// B pulls from A again — should propagate forgotten state
+	bundleA2 := exportToFile(t, ctx, storeA, dbPathA)
+	result2 := importFromFile(t, ctx, storeB, uidB, modelB, bundleA2)
+	if result2.Forgotten != 1 {
+		t.Fatalf("expected 1 forgotten propagation, got %d", result2.Forgotten)
+	}
+
+	// B should not list the thought
+	thoughts, _ := storeB.List(ctx, 10, 0)
+	for _, th := range thoughts {
+		if th.ID == thought.ID {
+			t.Fatal("forgotten thought should not appear in list")
+		}
+	}
+
+	// B's thought should have empty content
+	var content string
+	var state int
+	storeB.db.QueryRowContext(ctx,
+		`SELECT content, state FROM thoughts WHERE unique_id = ?`, thought.ID).Scan(&content, &state)
+	if content != "" {
+		t.Fatalf("expected empty content, got %q", content)
+	}
+	if state != int(StateForgotten) {
+		t.Fatalf("expected state=%d, got %d", StateForgotten, state)
+	}
+}

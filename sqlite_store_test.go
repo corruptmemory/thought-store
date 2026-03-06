@@ -223,7 +223,7 @@ func TestSQLiteImportThought(t *testing.T) {
 	}
 
 	embedding := []float32{0.1, 0.2, 0.3, 0.4}
-	err = store.ImportThought(ctx, "thought-uid-abc", "imported thought", "cli", instanceID, modelID, embedding, "2025-01-15T10:30:00.000Z")
+	err = store.ImportThought(ctx, "thought-uid-abc", "imported thought", "cli", instanceID, modelID, embedding, StateActive, "2025-01-15T10:30:00.000Z")
 	if err != nil {
 		t.Fatalf("ImportThought: %v", err)
 	}
@@ -243,7 +243,7 @@ func TestSQLiteImportThought(t *testing.T) {
 	}
 
 	// Import same UID again — should be no-op
-	err = store.ImportThought(ctx, "thought-uid-abc", "imported thought", "cli", instanceID, modelID, embedding, "2025-01-15T10:30:00.000Z")
+	err = store.ImportThought(ctx, "thought-uid-abc", "imported thought", "cli", instanceID, modelID, embedding, StateActive, "2025-01-15T10:30:00.000Z")
 	if err != nil {
 		t.Fatalf("ImportThought duplicate: %v", err)
 	}
