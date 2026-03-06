@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/klauspost/compress/zstd"
 )
@@ -57,5 +59,50 @@ func ExportBundle(ctx context.Context, store *SQLiteStore, dbPath string, w io.W
 		return fmt.Errorf("write assets dir header: %w", err)
 	}
 
+	return nil
+}
+
+// unpackBundle decompresses a zstd tarball into the given directory.
+func unpackBundle(r io.Reader, destDir string) error {
+	zr, err := zstd.NewReader(r)
+	if err != nil {
+		return fmt.Errorf("create zstd reader: %w", err)
+	}
+	defer zr.Close()
+
+	tr := tar.NewReader(zr)
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("read tar: %w", err)
+		}
+
+		target := filepath.Join(destDir, header.Name)
+
+		// Prevent path traversal
+		if !strings.HasPrefix(filepath.Clean(target), filepath.Clean(destDir)) {
+			return fmt.Errorf("invalid tar path: %s", header.Name)
+		}
+
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, 0755); err != nil {
+				return fmt.Errorf("mkdir %s: %w", target, err)
+			}
+		case tar.TypeReg:
+			f, err := os.Create(target)
+			if err != nil {
+				return fmt.Errorf("create %s: %w", target, err)
+			}
+			if _, err := io.Copy(f, tr); err != nil {
+				f.Close()
+				return fmt.Errorf("write %s: %w", target, err)
+			}
+			f.Close()
+		}
+	}
 	return nil
 }
