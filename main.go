@@ -606,7 +606,7 @@ func (cmd *SyncPullCmd) Execute(args []string) error {
 		return fmt.Errorf("peer returned %d: %s", resp.StatusCode, body)
 	}
 
-	result, err := ImportBundle(ctx, store, myUID, modelID, resp.Body)
+	result, err := ImportBundle(ctx, store, myUID, modelID, resp.Body, nil)
 	if err != nil {
 		return fmt.Errorf("import: %w", err)
 	}

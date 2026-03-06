@@ -233,7 +233,7 @@ func (s *Server) handleSyncImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := ImportBundle(r.Context(), s.store, s.instanceUID, s.modelID, r.Body)
+	result, err := ImportBundle(r.Context(), s.store, s.instanceUID, s.modelID, r.Body, s.vecIndex)
 	if err != nil {
 		http.Error(w, "import failed: "+err.Error(), http.StatusInternalServerError)
 		return

@@ -58,7 +58,7 @@ func importFromFile(t *testing.T, ctx context.Context, store *SQLiteStore, myUID
 	}
 	defer f.Close()
 
-	result, err := ImportBundle(ctx, store, myUID, modelID, f)
+	result, err := ImportBundle(ctx, store, myUID, modelID, f, nil)
 	if err != nil {
 		t.Fatalf("ImportBundle: %v", err)
 	}
@@ -239,7 +239,7 @@ func TestImportBundle(t *testing.T) {
 	}
 	defer inFile.Close()
 
-	result, err := ImportBundle(ctx, storeB, myUID, modelIDB, inFile)
+	result, err := ImportBundle(ctx, storeB, myUID, modelIDB, inFile, nil)
 	if err != nil {
 		t.Fatalf("ImportBundle: %v", err)
 	}
@@ -263,7 +263,7 @@ func TestImportBundle(t *testing.T) {
 	// Import again — should be idempotent
 	inFile2, _ := os.Open(bundlePath)
 	defer inFile2.Close()
-	result2, err := ImportBundle(ctx, storeB, myUID, modelIDB, inFile2)
+	result2, err := ImportBundle(ctx, storeB, myUID, modelIDB, inFile2, nil)
 	if err != nil {
 		t.Fatalf("ImportBundle second: %v", err)
 	}
@@ -354,7 +354,7 @@ func TestImportModelMismatch(t *testing.T) {
 	uidB, _ := storeB.InstanceUID(ctx, instB)
 	in, _ := os.Open(bundlePath)
 	defer in.Close()
-	result, err := ImportBundle(ctx, storeB, uidB, modelB, in)
+	result, err := ImportBundle(ctx, storeB, uidB, modelB, in, nil)
 	if err != nil {
 		t.Fatalf("ImportBundle: %v", err)
 	}

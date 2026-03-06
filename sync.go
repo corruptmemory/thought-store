@@ -73,7 +73,7 @@ func ExportBundle(ctx context.Context, store *SQLiteStore, dbPath string, w io.W
 // ImportBundle decompresses a sync bundle and merges it into the local database.
 // myInstanceUID is this instance's unique_id — thoughts originating from this
 // instance are skipped (they came from us originally).
-func ImportBundle(ctx context.Context, store *SQLiteStore, myInstanceUID string, localModelID int, r io.Reader) (*ImportResult, error) {
+func ImportBundle(ctx context.Context, store *SQLiteStore, myInstanceUID string, localModelID int, r io.Reader, vecIndex *VecIndex) (*ImportResult, error) {
 	tmpDir, err := os.MkdirTemp("", "sync-import-*")
 	if err != nil {
 		return nil, fmt.Errorf("create temp dir: %w", err)
@@ -173,6 +173,9 @@ func ImportBundle(ctx context.Context, store *SQLiteStore, myInstanceUID string,
 		}
 
 		result.NewThoughts++
+		if embedding != nil && vecIndex != nil {
+			vecIndex.Add(thoughtUID, embedding)
+		}
 		if embedding == nil {
 			result.ReembedQueued++
 		}
