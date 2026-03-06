@@ -443,6 +443,80 @@ func (s *SQLiteStore) GetByUniqueIDs(ctx context.Context, uids []string) ([]Thou
 	return result, rows.Err()
 }
 
+// InstanceUID returns the unique_id for a given instance integer ID.
+func (s *SQLiteStore) InstanceUID(ctx context.Context, instanceID int) (string, error) {
+	var uid string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT unique_id FROM instances WHERE id = ?`, instanceID).Scan(&uid)
+	if err != nil {
+		return "", fmt.Errorf("instance uid: %w", err)
+	}
+	return uid, nil
+}
+
+// ImportInstance creates an instance record with a known unique_id (from a foreign DB).
+// Returns the local integer ID. Idempotent: if the unique_id already exists, returns its ID.
+func (s *SQLiteStore) ImportInstance(ctx context.Context, uniqueID, name, description string) (int, error) {
+	var id int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id FROM instances WHERE unique_id = ?`, uniqueID).Scan(&id)
+	if err == nil {
+		return id, nil
+	}
+
+	res, err := s.db.ExecContext(ctx,
+		`INSERT INTO instances (unique_id, name, description) VALUES (?, ?, ?)`,
+		uniqueID, name, description)
+	if err != nil {
+		return 0, fmt.Errorf("import instance: %w", err)
+	}
+	insertedID, _ := res.LastInsertId()
+	return int(insertedID), nil
+}
+
+// ImportThought inserts a thought with a known unique_id, preserving created_at.
+// Skips silently if a thought with this unique_id already exists (idempotent).
+// If embedding is nil, the thought is imported without an embedding (queued for re-embed).
+func (s *SQLiteStore) ImportThought(ctx context.Context, uniqueID, content, source string, instanceID, modelID int, embedding []float32, createdAt string) error {
+	// Check if already exists
+	var exists int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT 1 FROM thoughts WHERE unique_id = ?`, uniqueID).Scan(&exists)
+	if err == nil {
+		return nil // already imported
+	}
+
+	sourceID, err := s.SourceID(ctx, source)
+	if err != nil {
+		return err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	res, err := tx.ExecContext(ctx,
+		`INSERT INTO thoughts (unique_id, content, source_id, instance_id, created_at) VALUES (?, ?, ?, ?, ?)`,
+		uniqueID, content, sourceID, instanceID, createdAt)
+	if err != nil {
+		return fmt.Errorf("import thought: %w", err)
+	}
+
+	if embedding != nil {
+		thoughtID, _ := res.LastInsertId()
+		_, err = tx.ExecContext(ctx,
+			`INSERT INTO embeddings (thought_id, model_id, vector) VALUES (?, ?, ?)`,
+			thoughtID, modelID, encodeVector(embedding))
+		if err != nil {
+			return fmt.Errorf("import embedding: %w", err)
+		}
+	}
+
+	return tx.Commit()
+}
+
 // encodeVector converts []float32 to raw bytes for BLOB storage.
 func encodeVector(v []float32) []byte {
 	buf := make([]byte, len(v)*4)
