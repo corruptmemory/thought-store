@@ -227,7 +227,158 @@ func ImportBundle(ctx context.Context, store *SQLiteStore, myInstanceUID string,
 		return nil, fmt.Errorf("forgotten rows: %w", err)
 	}
 
+	// Step 5: Import metadata labels and associations
+	if err := importMetadata(ctx, store, foreignStore, instanceMap); err != nil {
+		return nil, fmt.Errorf("import metadata: %w", err)
+	}
+
+	// Step 6: Import refined_thoughts edges
+	if err := importRefinedThoughts(ctx, store, foreignStore, instanceMap); err != nil {
+		return nil, fmt.Errorf("import refined thoughts: %w", err)
+	}
+
 	return result, nil
+}
+
+// importMetadata imports metadata labels and thought_metadata associations from the foreign DB.
+func importMetadata(ctx context.Context, localStore, foreignStore *SQLiteStore, instanceMap map[string]int) error {
+	// Step 5a: Import metadata labels (content-addressed, dedup by type+value)
+	metaMap := make(map[int]int) // foreign metadata.id -> local metadata.id
+
+	metaRows, err := foreignStore.db.QueryContext(ctx,
+		`SELECT id, metadata_type, value FROM metadata`)
+	if err != nil {
+		return fmt.Errorf("query foreign metadata: %w", err)
+	}
+	defer metaRows.Close()
+
+	for metaRows.Next() {
+		var foreignID, mt int
+		var value string
+		if err := metaRows.Scan(&foreignID, &mt, &value); err != nil {
+			return fmt.Errorf("scan metadata: %w", err)
+		}
+		localID, err := localStore.EnsureMetadata(ctx, MetadataType(mt), value)
+		if err != nil {
+			return fmt.Errorf("ensure metadata: %w", err)
+		}
+		metaMap[foreignID] = localID
+	}
+	if err := metaRows.Err(); err != nil {
+		return fmt.Errorf("metadata rows: %w", err)
+	}
+
+	// Step 5b: Import thought_metadata associations (UUID-tracked)
+	tmRows, err := foreignStore.db.QueryContext(ctx,
+		`SELECT tm.unique_id, t.unique_id, tm.metadata_id, i.unique_id
+		 FROM thought_metadata tm
+		 JOIN thoughts t ON t.id = tm.thought_id
+		 JOIN instances i ON i.id = tm.instance_id`)
+	if err != nil {
+		return fmt.Errorf("query foreign thought_metadata: %w", err)
+	}
+	defer tmRows.Close()
+
+	for tmRows.Next() {
+		var tmUID, thoughtUID, instanceUID string
+		var foreignMetaID int
+		if err := tmRows.Scan(&tmUID, &thoughtUID, &foreignMetaID, &instanceUID); err != nil {
+			return fmt.Errorf("scan thought_metadata: %w", err)
+		}
+
+		// Skip if already imported
+		var exists int
+		if localStore.db.QueryRowContext(ctx,
+			`SELECT 1 FROM thought_metadata WHERE unique_id = ?`, tmUID).Scan(&exists) == nil {
+			continue
+		}
+
+		// Resolve local IDs
+		var localThoughtID int
+		if localStore.db.QueryRowContext(ctx,
+			`SELECT id FROM thoughts WHERE unique_id = ?`, thoughtUID).Scan(&localThoughtID) != nil {
+			continue // thought not imported
+		}
+
+		localMetaID, ok := metaMap[foreignMetaID]
+		if !ok {
+			continue
+		}
+
+		localInstanceID, ok := instanceMap[instanceUID]
+		if !ok {
+			continue
+		}
+
+		_, err := localStore.db.ExecContext(ctx,
+			`INSERT OR IGNORE INTO thought_metadata (unique_id, thought_id, metadata_id, instance_id) VALUES (?, ?, ?, ?)`,
+			tmUID, localThoughtID, localMetaID, localInstanceID)
+		if err != nil {
+			return fmt.Errorf("import thought_metadata %s: %w", tmUID, err)
+		}
+	}
+	return tmRows.Err()
+}
+
+// importRefinedThoughts imports refined_thoughts DAG edges from the foreign DB.
+func importRefinedThoughts(ctx context.Context, localStore, foreignStore *SQLiteStore, instanceMap map[string]int) error {
+	rows, err := foreignStore.db.QueryContext(ctx,
+		`SELECT rt.unique_id, src.unique_id, tgt.unique_id, i.unique_id
+		 FROM refined_thoughts rt
+		 JOIN thoughts src ON src.id = rt.source_thought_id
+		 JOIN thoughts tgt ON tgt.id = rt.target_thought_id
+		 JOIN instances i ON i.id = rt.instance_id`)
+	if err != nil {
+		return fmt.Errorf("query foreign refined_thoughts: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var edgeUID, srcUID, tgtUID, instanceUID string
+		if err := rows.Scan(&edgeUID, &srcUID, &tgtUID, &instanceUID); err != nil {
+			return fmt.Errorf("scan refined_thoughts: %w", err)
+		}
+
+		// Skip if already imported
+		var exists int
+		if localStore.db.QueryRowContext(ctx,
+			`SELECT 1 FROM refined_thoughts WHERE unique_id = ?`, edgeUID).Scan(&exists) == nil {
+			continue
+		}
+
+		// Resolve local IDs
+		var localSrcID, localTgtID int
+		if localStore.db.QueryRowContext(ctx,
+			`SELECT id FROM thoughts WHERE unique_id = ?`, srcUID).Scan(&localSrcID) != nil {
+			continue
+		}
+		if localStore.db.QueryRowContext(ctx,
+			`SELECT id FROM thoughts WHERE unique_id = ?`, tgtUID).Scan(&localTgtID) != nil {
+			continue
+		}
+
+		localInstanceID, ok := instanceMap[instanceUID]
+		if !ok {
+			continue
+		}
+
+		_, err := localStore.db.ExecContext(ctx,
+			`INSERT OR IGNORE INTO refined_thoughts (unique_id, source_thought_id, target_thought_id, instance_id)
+			 VALUES (?, ?, ?, ?)`,
+			edgeUID, localSrcID, localTgtID, localInstanceID)
+		if err != nil {
+			return fmt.Errorf("import refined_thoughts %s: %w", edgeUID, err)
+		}
+
+		// Mark source as refined if currently active
+		_, err = localStore.db.ExecContext(ctx,
+			`UPDATE thoughts SET state = ? WHERE id = ? AND state = ?`,
+			StateRefined, localSrcID, StateActive)
+		if err != nil {
+			return fmt.Errorf("mark source refined: %w", err)
+		}
+	}
+	return rows.Err()
 }
 
 // importInstances imports all foreign instances into the local DB.

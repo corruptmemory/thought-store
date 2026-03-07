@@ -3,6 +3,8 @@ package main
 import "time"
 
 // ThoughtState represents the lifecycle state of a thought.
+// IMPORTANT: These integer values are stored in the database.
+// Order must be preserved forever. You can only add new values, never delete or reorder.
 type ThoughtState int
 
 const (
@@ -44,13 +46,67 @@ func (s *ThoughtState) UnmarshalText(text []byte) error {
 	return nil
 }
 
+// MetadataType classifies a metadata entry.
+// IMPORTANT: These integer values are stored in the database.
+// Order must be preserved forever. You can only add new values, never delete or reorder.
+type MetadataType int
+
+const (
+	MetadataPerson     MetadataType = iota // 0 — person mentioned
+	MetadataDate                           // 1 — date referenced (YYYY-MM-DD)
+	MetadataTag                            // 2 — topic tag
+	MetadataActionItem                     // 3 — implied to-do
+)
+
+func (m MetadataType) String() string {
+	switch m {
+	case MetadataPerson:
+		return "person"
+	case MetadataDate:
+		return "date"
+	case MetadataTag:
+		return "tag"
+	case MetadataActionItem:
+		return "action_item"
+	default:
+		return "unknown"
+	}
+}
+
+func (m MetadataType) MarshalText() ([]byte, error) {
+	return []byte(m.String()), nil
+}
+
+func (m *MetadataType) UnmarshalText(text []byte) error {
+	switch string(text) {
+	case "person":
+		*m = MetadataPerson
+	case "date":
+		*m = MetadataDate
+	case "tag":
+		*m = MetadataTag
+	case "action_item":
+		*m = MetadataActionItem
+	default:
+		*m = MetadataPerson
+	}
+	return nil
+}
+
+// ThoughtMetadataEntry is a single metadata tag on a thought.
+type ThoughtMetadataEntry struct {
+	Type  MetadataType `json:"type"`
+	Value string       `json:"value"`
+}
+
 // Thought represents a single captured thought.
 type Thought struct {
-	ID        string       `json:"id"`
-	Content   string       `json:"content"`
-	Source    string       `json:"source"`
-	State    ThoughtState `json:"state"`
-	CreatedAt time.Time    `json:"created_at"`
+	ID        string                 `json:"id"`
+	Content   string                 `json:"content"`
+	Source    string                 `json:"source"`
+	State    ThoughtState           `json:"state"`
+	Metadata []ThoughtMetadataEntry `json:"metadata,omitempty"`
+	CreatedAt time.Time              `json:"created_at"`
 }
 
 // SearchResult is a Thought with a similarity score from vector search.

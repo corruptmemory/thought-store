@@ -39,6 +39,8 @@ func NewServer(brain ThoughtStore) *Server {
 	s.router.Get("/api/search", s.handleSearch)
 	s.router.Get("/api/stats", s.handleStats)
 	s.router.Get("/api/diagnostics", s.handleDiagnostics)
+	s.router.Patch("/api/thoughts/{uuid}/metadata", s.handleUpdateMetadata)
+	s.router.Post("/api/thoughts/refine", s.handleRefine)
 
 	// Sync routes
 	s.router.Get("/api/sync", s.handleSyncExport)
@@ -90,11 +92,13 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 }
 
 type captureRequest struct {
-	Content string `json:"content"`
+	Content  string                 `json:"content"`
+	Metadata []ThoughtMetadataEntry `json:"metadata,omitempty"`
 }
 
 func (s *Server) handleCapture(w http.ResponseWriter, r *http.Request) {
 	var content string
+	var metadata []ThoughtMetadataEntry
 
 	if r.Header.Get("Content-Type") == "application/x-www-form-urlencoded" {
 		content = r.FormValue("content")
@@ -105,6 +109,7 @@ func (s *Server) handleCapture(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		content = req.Content
+		metadata = req.Metadata
 	}
 
 	if content == "" {
@@ -117,7 +122,7 @@ func (s *Server) handleCapture(w http.ResponseWriter, r *http.Request) {
 		source = r.Header.Get("X-Source")
 	}
 
-	thought, err := s.brain.Capture(r.Context(), content, source)
+	thought, err := s.brain.Capture(r.Context(), content, source, metadata)
 	if err != nil {
 		http.Error(w, "capture failed: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -212,6 +217,63 @@ func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(report)
+}
+
+func (s *Server) handleUpdateMetadata(w http.ResponseWriter, r *http.Request) {
+	uid := chi.URLParam(r, "uuid")
+	if uid == "" {
+		http.Error(w, "uuid is required", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		Delete []ThoughtMetadataEntry `json:"delete,omitempty"`
+		Add    []ThoughtMetadataEntry `json:"add,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	thought, err := s.brain.UpdateThoughtMetadata(r.Context(), uid, req.Delete, req.Add)
+	if err != nil {
+		http.Error(w, "update failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(thought)
+}
+
+func (s *Server) handleRefine(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SourceIDs []string               `json:"source_ids"`
+		Content   string                 `json:"content"`
+		Metadata  []ThoughtMetadataEntry `json:"metadata,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if len(req.SourceIDs) == 0 || req.Content == "" {
+		http.Error(w, "source_ids and content are required", http.StatusBadRequest)
+		return
+	}
+
+	source := "web"
+	if r.Header.Get("X-Source") != "" {
+		source = r.Header.Get("X-Source")
+	}
+
+	thought, err := s.brain.RefineThoughts(r.Context(), req.SourceIDs, req.Content, req.Metadata, source)
+	if err != nil {
+		http.Error(w, "refine failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(thought)
 }
 
 func (s *Server) handleSyncExport(w http.ResponseWriter, r *http.Request) {

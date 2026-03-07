@@ -88,6 +88,32 @@ func (s *SQLiteStore) Migrate(ctx context.Context) error {
 			vector     BLOB NOT NULL,
 			PRIMARY KEY (thought_id, model_id)
 		)`,
+		`CREATE TABLE IF NOT EXISTS metadata (
+			id            INTEGER PRIMARY KEY,
+			metadata_type INTEGER NOT NULL,
+			value         TEXT NOT NULL,
+			UNIQUE(metadata_type, value)
+		)`,
+		`CREATE TABLE IF NOT EXISTS thought_metadata (
+			id          INTEGER PRIMARY KEY,
+			unique_id   TEXT NOT NULL UNIQUE,
+			thought_id  INTEGER NOT NULL REFERENCES thoughts(id),
+			metadata_id INTEGER NOT NULL REFERENCES metadata(id),
+			instance_id INTEGER NOT NULL REFERENCES instances(id),
+			UNIQUE(thought_id, metadata_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_thought_metadata_thought_id ON thought_metadata(thought_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_thought_metadata_metadata_id ON thought_metadata(metadata_id)`,
+		`CREATE TABLE IF NOT EXISTS refined_thoughts (
+			id                INTEGER PRIMARY KEY,
+			unique_id         TEXT NOT NULL UNIQUE,
+			source_thought_id INTEGER NOT NULL REFERENCES thoughts(id),
+			target_thought_id INTEGER NOT NULL REFERENCES thoughts(id),
+			instance_id       INTEGER NOT NULL REFERENCES instances(id),
+			UNIQUE(source_thought_id, target_thought_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_refined_thoughts_source ON refined_thoughts(source_thought_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_refined_thoughts_target ON refined_thoughts(target_thought_id)`,
 	}
 
 	for _, stmt := range statements {
@@ -186,6 +212,131 @@ func (s *SQLiteStore) SourceID(ctx context.Context, name string) (int, error) {
 	return int(insertedID), nil
 }
 
+// EnsureMetadata creates or retrieves a metadata label.
+// Content-addressed: deduplicated by (metadata_type, value).
+func (s *SQLiteStore) EnsureMetadata(ctx context.Context, mt MetadataType, value string) (int, error) {
+	var id int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id FROM metadata WHERE metadata_type = ? AND value = ?`, mt, value).Scan(&id)
+	if err == nil {
+		return id, nil
+	}
+
+	res, err := s.db.ExecContext(ctx,
+		`INSERT INTO metadata (metadata_type, value) VALUES (?, ?)`, mt, value)
+	if err != nil {
+		return 0, fmt.Errorf("create metadata: %w", err)
+	}
+	insertedID, _ := res.LastInsertId()
+	return int(insertedID), nil
+}
+
+// AddThoughtMetadata associates a metadata label with a thought.
+// Creates the metadata label if it doesn't exist. Generates a UUID for the association.
+// Idempotent: duplicate (thought_id, metadata_id) pairs are silently ignored.
+func (s *SQLiteStore) AddThoughtMetadata(ctx context.Context, thoughtUID string, mt MetadataType, value string, instanceID int) error {
+	metaID, err := s.EnsureMetadata(ctx, mt, value)
+	if err != nil {
+		return err
+	}
+
+	var thoughtID int
+	err = s.db.QueryRowContext(ctx,
+		`SELECT id FROM thoughts WHERE unique_id = ?`, thoughtUID).Scan(&thoughtID)
+	if err != nil {
+		return fmt.Errorf("find thought %s: %w", thoughtUID, err)
+	}
+
+	uid := uuid.New().String()
+	_, err = s.db.ExecContext(ctx,
+		`INSERT OR IGNORE INTO thought_metadata (unique_id, thought_id, metadata_id, instance_id) VALUES (?, ?, ?, ?)`,
+		uid, thoughtID, metaID, instanceID)
+	if err != nil {
+		return fmt.Errorf("add thought metadata: %w", err)
+	}
+	return nil
+}
+
+// RemoveThoughtMetadata removes the association between a thought and a metadata label.
+// The metadata label itself is preserved (content-addressed, shared).
+// No error if the association doesn't exist.
+func (s *SQLiteStore) RemoveThoughtMetadata(ctx context.Context, thoughtUID string, mt MetadataType, value string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM thought_metadata
+		 WHERE thought_id = (SELECT id FROM thoughts WHERE unique_id = ?)
+		   AND metadata_id = (SELECT id FROM metadata WHERE metadata_type = ? AND value = ?)`,
+		thoughtUID, mt, value)
+	if err != nil {
+		return fmt.Errorf("remove thought metadata: %w", err)
+	}
+	return nil
+}
+
+// LoadThoughtMetadata returns metadata entries grouped by thought unique_id.
+func (s *SQLiteStore) LoadThoughtMetadata(ctx context.Context, thoughtUIDs []string) (map[string][]ThoughtMetadataEntry, error) {
+	result := make(map[string][]ThoughtMetadataEntry)
+	if len(thoughtUIDs) == 0 {
+		return result, nil
+	}
+
+	placeholders := make([]string, len(thoughtUIDs))
+	args := make([]any, len(thoughtUIDs))
+	for i, uid := range thoughtUIDs {
+		placeholders[i] = "?"
+		args[i] = uid
+	}
+
+	query := fmt.Sprintf(
+		`SELECT t.unique_id, m.metadata_type, m.value
+		 FROM thought_metadata tm
+		 JOIN thoughts t ON t.id = tm.thought_id
+		 JOIN metadata m ON m.id = tm.metadata_id
+		 WHERE t.unique_id IN (%s)
+		 ORDER BY t.unique_id, m.metadata_type, m.value`,
+		strings.Join(placeholders, ","))
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("load thought metadata: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var thoughtUID string
+		var mt int
+		var value string
+		if err := rows.Scan(&thoughtUID, &mt, &value); err != nil {
+			return nil, fmt.Errorf("scan metadata: %w", err)
+		}
+		result[thoughtUID] = append(result[thoughtUID], ThoughtMetadataEntry{
+			Type:  MetadataType(mt),
+			Value: value,
+		})
+	}
+	return result, rows.Err()
+}
+
+// populateMetadata loads and attaches metadata to a slice of thoughts.
+func (s *SQLiteStore) populateMetadata(ctx context.Context, thoughts []Thought) error {
+	if len(thoughts) == 0 {
+		return nil
+	}
+	uids := make([]string, len(thoughts))
+	for i, t := range thoughts {
+		uids[i] = t.ID
+	}
+	meta, err := s.LoadThoughtMetadata(ctx, uids)
+	if err != nil {
+		return err
+	}
+	for i := range thoughts {
+		if entries, ok := meta[thoughts[i].ID]; ok {
+			thoughts[i].Metadata = entries
+		}
+	}
+	return nil
+}
+
 // Insert stores a thought with its embedding.
 func (s *SQLiteStore) Insert(ctx context.Context, content string, embedding []float32, source string, instanceID, modelID int) (*Thought, error) {
 	uid := uuid.New().String()
@@ -236,6 +387,76 @@ func (s *SQLiteStore) Insert(ctx context.Context, content string, embedding []fl
 	}, nil
 }
 
+// InsertWithMetadata inserts a thought and attaches metadata entries in one operation.
+func (s *SQLiteStore) InsertWithMetadata(ctx context.Context, content string, embedding []float32, source string, instanceID, modelID int, metadata []ThoughtMetadataEntry) (*Thought, error) {
+	thought, err := s.Insert(ctx, content, embedding, source, instanceID, modelID)
+	if err != nil {
+		return nil, err
+	}
+	for _, m := range metadata {
+		if err := s.AddThoughtMetadata(ctx, thought.ID, m.Type, m.Value, instanceID); err != nil {
+			return nil, fmt.Errorf("attach metadata: %w", err)
+		}
+	}
+	thought.Metadata = metadata
+	return thought, nil
+}
+
+// RefineThoughts creates a summary thought from multiple sources.
+// Sources are marked as StateRefined. DAG edges are recorded.
+// The embedding is provided by the caller (already generated).
+func (s *SQLiteStore) RefineThoughts(ctx context.Context, sourceUIDs []string, content string, embedding []float32, metadata []ThoughtMetadataEntry, source string, instanceID, modelID int) (*Thought, error) {
+	// Insert the summary thought
+	summary, err := s.Insert(ctx, content, embedding, source, instanceID, modelID)
+	if err != nil {
+		return nil, fmt.Errorf("insert summary: %w", err)
+	}
+
+	// Get summary's integer ID
+	var targetID int
+	err = s.db.QueryRowContext(ctx,
+		`SELECT id FROM thoughts WHERE unique_id = ?`, summary.ID).Scan(&targetID)
+	if err != nil {
+		return nil, fmt.Errorf("find summary: %w", err)
+	}
+
+	// For each source: record edge, set state to refined
+	for _, srcUID := range sourceUIDs {
+		var srcID int
+		err := s.db.QueryRowContext(ctx,
+			`SELECT id FROM thoughts WHERE unique_id = ?`, srcUID).Scan(&srcID)
+		if err != nil {
+			return nil, fmt.Errorf("find source %s: %w", srcUID, err)
+		}
+
+		edgeUID := uuid.New().String()
+		_, err = s.db.ExecContext(ctx,
+			`INSERT OR IGNORE INTO refined_thoughts (unique_id, source_thought_id, target_thought_id, instance_id)
+			 VALUES (?, ?, ?, ?)`,
+			edgeUID, srcID, targetID, instanceID)
+		if err != nil {
+			return nil, fmt.Errorf("insert edge: %w", err)
+		}
+
+		_, err = s.db.ExecContext(ctx,
+			`UPDATE thoughts SET state = ? WHERE id = ? AND state = ?`,
+			StateRefined, srcID, StateActive)
+		if err != nil {
+			return nil, fmt.Errorf("mark source refined: %w", err)
+		}
+	}
+
+	// Attach metadata
+	for _, m := range metadata {
+		if err := s.AddThoughtMetadata(ctx, summary.ID, m.Type, m.Value, instanceID); err != nil {
+			return nil, fmt.Errorf("attach metadata: %w", err)
+		}
+	}
+	summary.Metadata = metadata
+
+	return summary, nil
+}
+
 // List returns recent thoughts.
 func (s *SQLiteStore) List(ctx context.Context, limit, offset int) ([]Thought, error) {
 	rows, err := s.db.QueryContext(ctx,
@@ -262,7 +483,13 @@ func (s *SQLiteStore) List(ctx context.Context, limit, offset int) ([]Thought, e
 		t.CreatedAt, _ = time.Parse("2006-01-02T15:04:05.000Z", createdAt)
 		thoughts = append(thoughts, t)
 	}
-	return thoughts, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := s.populateMetadata(ctx, thoughts); err != nil {
+		return nil, fmt.Errorf("load metadata: %w", err)
+	}
+	return thoughts, nil
 }
 
 // Stats returns aggregate statistics.
@@ -450,7 +677,13 @@ func (s *SQLiteStore) GetByUniqueIDs(ctx context.Context, uids []string) ([]Thou
 			result = append(result, t)
 		}
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := s.populateMetadata(ctx, result); err != nil {
+		return nil, fmt.Errorf("load metadata: %w", err)
+	}
+	return result, nil
 }
 
 // InstanceUID returns the unique_id for a given instance integer ID.
@@ -557,7 +790,80 @@ func (s *SQLiteStore) ForgetThought(ctx context.Context, uniqueID string) error 
 		return fmt.Errorf("delete embeddings: %w", err)
 	}
 
+	_, err = tx.ExecContext(ctx,
+		`DELETE FROM thought_metadata WHERE thought_id = ?`, thoughtID)
+	if err != nil {
+		return fmt.Errorf("delete thought metadata: %w", err)
+	}
+
+	// Delete refinement edges where this thought is a source
+	_, err = tx.ExecContext(ctx,
+		`DELETE FROM refined_thoughts WHERE source_thought_id = ?`, thoughtID)
+	if err != nil {
+		return fmt.Errorf("delete source edges: %w", err)
+	}
+
+	// If this thought is a summary (target), delete those edges
+	// and conditionally revert sources to active
+	rows, err := tx.QueryContext(ctx,
+		`SELECT source_thought_id FROM refined_thoughts WHERE target_thought_id = ?`, thoughtID)
+	if err != nil {
+		return fmt.Errorf("find target edges: %w", err)
+	}
+	var sourceIDs []int
+	for rows.Next() {
+		var srcID int
+		if err := rows.Scan(&srcID); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan source id: %w", err)
+		}
+		sourceIDs = append(sourceIDs, srcID)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("source ids: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx,
+		`DELETE FROM refined_thoughts WHERE target_thought_id = ?`, thoughtID)
+	if err != nil {
+		return fmt.Errorf("delete target edges: %w", err)
+	}
+
+	// Revert sources to active only if they have no remaining outgoing edges
+	for _, srcID := range sourceIDs {
+		_, err = tx.ExecContext(ctx,
+			`UPDATE thoughts SET state = ?
+			 WHERE id = ? AND state = ?
+			   AND NOT EXISTS (SELECT 1 FROM refined_thoughts WHERE source_thought_id = ?)`,
+			StateActive, srcID, StateRefined, srcID)
+		if err != nil {
+			return fmt.Errorf("revert source %d: %w", srcID, err)
+		}
+	}
+
 	return tx.Commit()
+}
+
+// UpdateMetadata performs delete-then-add on a thought's metadata.
+// Returns the thought with updated metadata populated.
+func (s *SQLiteStore) UpdateMetadata(ctx context.Context, thoughtUID string, deletes, adds []ThoughtMetadataEntry, instanceID int) (*Thought, error) {
+	for _, d := range deletes {
+		if err := s.RemoveThoughtMetadata(ctx, thoughtUID, d.Type, d.Value); err != nil {
+			return nil, fmt.Errorf("delete metadata: %w", err)
+		}
+	}
+	for _, a := range adds {
+		if err := s.AddThoughtMetadata(ctx, thoughtUID, a.Type, a.Value, instanceID); err != nil {
+			return nil, fmt.Errorf("add metadata: %w", err)
+		}
+	}
+
+	thoughts, err := s.GetByUniqueIDs(ctx, []string{thoughtUID})
+	if err != nil || len(thoughts) == 0 {
+		return nil, fmt.Errorf("find thought %s: %w", thoughtUID, err)
+	}
+	return &thoughts[0], nil
 }
 
 // encodeVector converts []float32 to raw bytes for BLOB storage.
