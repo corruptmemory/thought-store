@@ -101,6 +101,18 @@ Integration tests against real Ollama (no mocks). SQLite tests use t.TempDir() f
 
 Design docs: `docs/plans/2026-03-05-sync-design.md`, `docs/plans/2026-03-05-sync.md`
 
+### Files as truth (exploratory — `docs/plans/2026-03-07-files-as-truth-design.md`)
+
+Architectural inversion under exploration: thoughts become plain text files (markdown/Org with front matter), the SQLite DB becomes a disposable cache (embeddings, parsed metadata, search indexes). Motivated by two forces: (1) the current tarball-based sync is O(everything) and will collapse under scale, (2) editor-native workflows (edit files directly, background service re-indexes via fsnotify).
+
+**Key elements:**
+- **Git for text sync**: branch-per-machine (`jim-desktop`, `jim-laptop`), peer-to-peer fetch+merge, optional forge for publish/seed/backup
+- **rsync for binary assets**: manifest handshake (SHA256 exchange), rsync deltas for P2P; git-lfs for forge
+- **Prior art**: Org-roam (files + SQLite cache), Denote (files only, no DB, metadata in filename)
+- **DB as cache**: embeddings, parsed metadata, asset manifests, FTS5. Disposable — rebuild from files + Ollama re-embed
+
+**Open questions**: file format, identity scheme, atomic operations across files+Git, cache rebuild contract, encryption at rest. See design doc for full analysis.
+
 ### Security (needs research)
 
 No auth on any endpoint currently. Sync endpoints (`/api/sync`) are wide open. Needs:
