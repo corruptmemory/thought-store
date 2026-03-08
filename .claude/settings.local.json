@@ -68,7 +68,16 @@
       "mcp__thought-store__search_thoughts",
       "mcp__thought-store__list_thoughts",
       "mcp__thought-store__thought_stats",
-      "mcp__thought-store__thought_diagnostics"
+      "mcp__thought-store__thought_diagnostics",
+      "mcp__plugin_pinecone_pinecone__cascading-search",
+      "mcp__plugin_pinecone_pinecone__create-index-for-model",
+      "mcp__plugin_pinecone_pinecone__describe-index",
+      "mcp__plugin_pinecone_pinecone__describe-index-stats",
+      "mcp__plugin_pinecone_pinecone__list-indexes",
+      "mcp__plugin_pinecone_pinecone__rerank-documents",
+      "mcp__plugin_pinecone_pinecone__search-docs",
+      "mcp__plugin_pinecone_pinecone__search-records",
+      "mcp__plugin_pinecone_pinecone__upsert-records"
     ]
   },
   "enabledMcpjsonServers": [

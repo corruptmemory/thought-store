@@ -165,6 +165,22 @@ Refinement and forgetting are implemented (see key patterns above). Remaining op
 - UI for exploring the refinement DAG
 - Brain-mediated refinement UX: search → select → refine flow in chat
 
+### Editor integration (future)
+
+Recall and insert thoughts from any editor:
+- Select text + keybind → semantic search for related thoughts
+- Insert "observation" or "snippet" with accompanying thoughts/tags
+- Aligns with files-as-truth direction: editor IS the primary interface, thought-store is a background indexer exposing search via socket/pipe
+
+### Browser extension (future)
+
+Extension + toolbar for capture/annotate/recall while browsing:
+- **Capture**: Grab rendered DOM from current page, convert to Markdown, store as thought or asset
+- **Annotate**: Add notes/tags to captured pages
+- **Recall**: Search thought store for related content while browsing
+- **Web clipping via Cloudflare Browser Rendering API**: `POST https://api.cloudflare.com/client/v4/accounts/<accountId>/browser-rendering/markdown` — accepts raw `html` (not just URLs), returns clean Markdown. Full headless Chromium render handles JS-heavy/SPA pages. Key advantage: extension sends the DOM it already has, so it works on authenticated/paywalled pages the user is already logged into — no re-fetch needed.
+- Docs: https://developers.cloudflare.com/browser-rendering/rest-api/markdown-endpoint/
+
 ### Memory optimization (future)
 
 At >1M thoughts (~4GB index), explore mmap, float16 quantization, or disk-backed ANN index.
