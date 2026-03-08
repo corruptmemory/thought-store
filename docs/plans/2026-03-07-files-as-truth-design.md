@@ -57,7 +57,17 @@ No linking DB   Backlinks via DB      Backlinks + "thoughts like this"
 
 Files as truth (like both), with a SQLite cache (like Org-roam), but also with vector embeddings for semantic search (like neither).
 
-## Sync: Git for Text, rsync for Binaries
+## Sync: Git + LFS for Everything
+
+### Key discovery: git-lfs over pure SSH (2026-03-08)
+
+The original design split sync into "git for text, rsync for binaries" — but rsync on Windows was a known problem. Research revealed that **git-lfs v3.0+ supports a pure SSH transfer protocol**, eliminating the need for an HTTP LFS server *and* for rsync:
+
+- **`charmbracelet/git-lfs-transfer`** — a Go binary that implements the server side of the pure SSH LFS protocol. Install on each node: `go install github.com/charmbracelet/git-lfs-transfer@latest`
+- When the git remote is an SSH URL, git-lfs automatically uses SSH transport
+- No HTTP server required for P2P. Forges (GitHub/GitLab/Gitea) use their own HTTP LFS storage as usual.
+
+This unifies the sync story: **git handles text, git-lfs handles binaries, SSH is the transport for both in P2P mode.**
 
 ### Branch-per-machine model
 
@@ -67,7 +77,7 @@ Each machine has an identity and a corresponding Git branch:
 - Machine B works on branch `jim-laptop`
 
 When Machine B wants to merge with Machine A:
-1. `git fetch` Machine A's branch
+1. `git fetch ssh://jim-desktop/~/thoughts` (text + LFS objects over SSH)
 2. `git merge jim-desktop` into `jim-laptop`
 3. Success: done. Failure: human or AI resolves conflicts, or abort.
 
@@ -98,41 +108,41 @@ A "forge" (GitHub, GitLab, Gitea, bare repo on a NAS) is an optional always-on p
 - Backup by construction — durable off-site copy without thinking about it
 - Sharing, if you ever want it — give someone access, they see `main`, never your working branches
 
-### Binary assets
+### Binary assets via git-lfs
 
-Git handles text thoughts beautifully. Binaries (images, video, audio) need a different approach:
+Git handles text thoughts natively. Binaries (images, video, audio, web clippings) are tracked via git-lfs:
 
 | Context | Text (thoughts) | Binaries (assets) |
 |---|---|---|
-| **Peer-to-peer** | `git fetch` + merge | API manifest handshake + rsync |
-| **Forge publish** | `git push` + PR | `git-lfs` (forge handles storage) |
+| **Peer-to-peer** | `git fetch` over SSH | `git-lfs` over pure SSH (`git-lfs-transfer`) |
+| **Forge publish** | `git push` + PR | `git-lfs` over HTTP (forge stores blobs) |
 
-**Peer-to-peer binary sync flow:**
-1. Peers exchange asset manifests (path, SHA256, size) — cached in the DB for fast lookup
-2. Local instance diffs against its own manifest, identifies truly new/changed assets
-3. rsync transfers only deltas (rolling checksum algorithm handles partial changes to large files)
+**One tool for both modes.** The only difference is the transport: SSH for P2P, HTTP for forge.
 
-**Forge binary sync:**
-- git-lfs: pointer file in Git, blob on the forge's LFS storage
-- GitHub, GitLab, Gitea all support it
-- LFS only breaks down in P2P (assumes central server) — which is exactly where we use rsync instead
+**Selective sync via LFS controls:**
+- `GIT_LFS_SKIP_SMUDGE=1 git fetch` — fetch text + pointer files, skip downloading blobs
+- `git lfs pull --include="*.png"` — download only specific asset types
+- `git lfs fetch --recent` — download only recently referenced LFS objects
+- `.lfsconfig` per-repo can set `lfs.fetchexclude` patterns
+
+**LFS objects are whole-file transfers** (by content hash, not rsync-style deltas). This is fine for the expected asset types — images, web clippings, audio — which are write-once. rsync's rolling checksum advantage only matters for large files with small edits (video editing, database files), which isn't our use case.
 
 ```
 Machine A                          Machine B
     |                                  |
-    |<--- git fetch jim-laptop --------|  (text: Git handles it)
+    |<--- git fetch over SSH ----------|  (text: git objects)
+    |                                  |  (binaries: git-lfs over SSH)
     |                                  |
-    |<--- GET /api/assets/manifest ----|  (list of {path, sha256, size})
-    |                                  |
-    |  (diff against local manifest)   |
-    |  (identify missing/changed)      |
-    |                                  |
-    |<--- rsync <missing assets> ------|  (binary: rsync handles it)
-    |                                  |
-    |  (update local asset cache/DB)   |
     |  (git merge jim-laptop)          |
     |                                  |
 ```
+
+### Prerequisites per node
+
+For P2P sync to work, each node needs:
+1. **Git** (with LFS extension) — standard on all platforms
+2. **`git-lfs-transfer`** — Charmbracelet's Go binary, server side of pure SSH LFS protocol
+3. **SSH access between nodes** — see "SSH between nodes" in Open Questions
 
 ## The DB as Cache
 
@@ -155,14 +165,15 @@ Machine A                          Machine B
 | Component | Linux | macOS | Windows | Notes |
 |---|---|---|---|---|
 | Git | native | native | native | No issues |
-| rsync | native | native | **problematic** | WSL, MSYS2, or Go implementation needed |
+| git-lfs | native | native | native | Bundled with Git for Windows |
+| git-lfs-transfer | `go install` | `go install` | `go install` | Pure Go binary, cross-platform |
+| SSH | native | native | OpenSSH bundled since Win10 | See "SSH between nodes" below |
 | File naming | no issues | case-insensitive FS | no colons, 260-char limit, case-insensitive | Use Denote-style timestamp (no colons) |
 | fsnotify | inotify | kqueue | ReadDirectoryChangesW | Go library handles all three |
 | SQLite | pure Go | pure Go | pure Go | No issues |
 | Ollama | native | native | native | No issues |
-| git-lfs | native | native | native | Bundled with Git for Windows |
 
-**The rsync problem on Windows:** Options include (a) require WSL, (b) pure Go rsync implementation, (c) different binary delta approach on Windows, or (d) Windows gets forge-only sync via git-lfs, no P2P binary sync.
+**rsync eliminated.** The move to git-lfs over pure SSH resolves the Windows rsync problem entirely. All components are now cross-platform without caveats.
 
 **File naming safety:** avoid colons in identifiers (use `20260307T143000` not `14:30:00`), keep paths reasonably short, use consistent casing.
 
@@ -186,7 +197,58 @@ Currently a join table in SQLite. In files-as-truth, options include:
 - Front matter arrays listing source thought identifiers
 - The DB reconstructs the DAG from these file-level references
 
+### SSH between nodes
+
+Git-lfs over pure SSH eliminates rsync and the HTTP LFS server, but introduces a new dependency: SSH connectivity between nodes. This is the transport layer for P2P sync.
+
+**What's needed:** Each node must accept SSH connections from peers and have `git-lfs-transfer` on PATH.
+
+**Options for the network layer:**
+- **Embedded SSH server** — `golang.org/x/crypto/ssh` is a full SSH client+server in pure Go (no CGO). thought-store already embeds an HTTP server; adding an SSH listener on another port keeps the "single binary, all self-contained" philosophy. Peers connect to each other's embedded SSH, same as they currently connect to each other's HTTP for tarball sync. This also means `git-lfs-transfer` could be embedded rather than a separate binary on PATH.
+- **Tailscale SSH** — already in the stack for remote access. `tailscale ssh` provides authenticated, encrypted connections without managing keys or opening ports. Nodes are addressable by Tailscale hostname.
+- **Plain SSH** — works on LAN. Requires key exchange or password auth. Firewall/port management. Standard but more manual setup.
+- **Tailscale Funnel** — exposes a node to the public internet via Tailscale's edge. Probably overkill for P2P thought sync, but could enable sync with untrusted networks.
+
+**The embedded SSH angle:** The most self-contained option is to embed the SSH server in the thought-store binary itself. `golang.org/x/crypto/ssh` provides everything needed: server listener, pubkey/password auth, channel handling, subsystem dispatch. Charmbracelet's ecosystem (`soft-serve`, `wish`) already uses this exact pattern — Go binaries that are their own SSH servers. This means:
+- No dependency on system `sshd` configuration
+- thought-store controls its own auth (could use its own key exchange, or piggyback on Tailscale identity)
+- Git operations target `ssh://jim-desktop:2222/thoughts` (thought-store's embedded SSH port)
+- `git-lfs-transfer` protocol handler could be embedded directly (it's a Go library under the hood)
+- Works identically on Linux, macOS, Windows — no platform-specific SSH setup
+
+**Prior art in the Charmbracelet ecosystem:**
+- `soft-serve` — pure Go git server with SSH, includes LFS support
+- `git-lfs-transfer` — the SSH LFS protocol handler, already written in Go, potentially embeddable as a library
+- `wish` — framework for building SSH apps in Go
+
+**The Tailscale angle:** If both nodes are on the same Tailnet, Tailscale handles DNS, auth, and encryption at the network layer. The embedded SSH server still provides the git/LFS protocol, but Tailscale provides the secure transport underneath. This is the happy path for remote (non-LAN) sync.
+
+**Setup implications:** `thought-store setup` may need to:
+1. Generate a host key for the embedded SSH server (or derive from instance identity)
+2. Exchange/trust peer public keys (or rely on Tailscale for auth)
+3. Configure git remotes with the right SSH URLs pointing at thought-store's SSH port
+
+**Discovery:** mDNS currently discovers HTTP endpoints for the tarball sync. In the git+SSH world, mDNS TXT records should also advertise the SSH port and repo path. `thought-store scan` would show both HTTP and SSH endpoints.
+
+### Security and trust model
+
+Parked for separate deep exploration. The motivating idea is a **chain of trust with transitive closure**, inspired by Brave browser's trust model:
+
+- Node A trusts Node B (explicit key exchange or Tailscale identity)
+- Node B trusts Node C
+- Therefore Node A can transitively trust Node C (to some configurable depth/policy)
+
+This maps naturally to the gossip-style sync already in the design — thoughts propagate transitively through pairwise syncs, so trust should too. The trust graph and the sync graph are the same topology.
+
+**Open sub-questions:**
+- Trust granularity: all-or-nothing per node, or per-capability (read vs write vs sync)?
+- Trust attenuation: does trust weaken over transitive hops? (depth limit, capability narrowing)
+- Revocation: how does a node revoke trust, and how does that propagate?
+- Identity: what IS a node's identity? SSH host key? Tailscale identity? Self-signed cert? Instance UUID + signature?
+- Key management UX: `thought-store trust add <node>`, `thought-store trust list`, etc.?
+
 ### Encryption at rest
+
 Parked for separate exploration. Options differ in files-as-truth model:
 - `git-crypt` for selective file encryption in the repo
 - Filesystem-level encryption (LUKS/dm-crypt) for the whole directory

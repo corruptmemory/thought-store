@@ -107,15 +107,17 @@ Architectural inversion under exploration: thoughts become plain text files (mar
 
 **Key elements:**
 - **Git for text sync**: branch-per-machine (`jim-desktop`, `jim-laptop`), peer-to-peer fetch+merge, optional forge for publish/seed/backup
-- **rsync for binary assets**: manifest handshake (SHA256 exchange), rsync deltas for P2P; git-lfs for forge
+- **Git-lfs over pure SSH for binary assets**: `git-lfs` v3.0+ supports pure SSH transfer protocol via `charmbracelet/git-lfs-transfer` (Go binary). Eliminates rsync entirely — one tool for both P2P and forge sync. Resolves the Windows cross-platform problem (rsync was iffy on Windows).
+- **Embedded SSH server**: `golang.org/x/crypto/ssh` provides full SSH client+server in pure Go (no CGO). thought-store could embed its own SSH server for git+LFS P2P sync, keeping the single-binary philosophy. Prior art: Charmbracelet's `soft-serve` (Go git server with SSH+LFS).
 - **Prior art**: Org-roam (files + SQLite cache), Denote (files only, no DB, metadata in filename)
 - **DB as cache**: embeddings, parsed metadata, asset manifests, FTS5. Disposable — rebuild from files + Ollama re-embed
 
-**Open questions**: file format, identity scheme, atomic operations across files+Git, cache rebuild contract, encryption at rest. See design doc for full analysis.
+**Open questions**: file format, identity scheme, atomic operations across files+Git, cache rebuild contract, encryption at rest, SSH key management / auth between nodes. See design doc for full analysis.
 
 ### Security (needs research)
 
 No auth on any endpoint currently. Sync endpoints (`/api/sync`) are wide open. Needs:
+- **Trust model**: chain of trust with transitive closure (inspired by Brave browser). Node A trusts B, B trusts C, therefore A transitively trusts C. Trust graph mirrors the sync/gossip topology. Open questions: granularity, attenuation over hops, revocation propagation, node identity (SSH key? Tailscale identity? instance UUID + signature?).
 - Authentication for HTTP API and sync endpoints
 - Authorization model (who can push/pull)
 - Encryption of bundles in transit (TLS) and at rest
