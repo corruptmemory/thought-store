@@ -187,6 +187,15 @@ Extension + toolbar for capture/annotate/recall while browsing:
 
 At >1M thoughts (~4GB index), explore mmap, float16 quantization, or disk-backed ANN index.
 
+**Weaviate (ruled out):** Weaviate is a standalone vector database *server* (Go application, not a Go library). Requires Docker or a separate process. No Go embedded mode. Massive overkill for this scale. Breaks the single-binary philosophy. The Go client (`weaviate-go-client`) is just an HTTP client to the server.
+
+**When brute-force stops scaling**, the upgrade path is a pure Go embeddable HNSW library:
+- `coder/hnsw` — clean, minimal, pure Go, no CGO, persistence via Export/Import. O(log n) search.
+- `TFMV/hnsw` — pure Go, metadata+faceted search, Parquet persistence.
+- `wizenheimer/comet` — full vector store (HNSW, IVF, PQ, hybrid search), pure Go.
+
+Current brute-force SIMD approach (`viterin/vek`) is correct for hundreds-to-low-thousands of thoughts. HNSW matters at 100K+.
+
 ## Config
 
 `thought-store.toml` with sections: `[server]`, `[database]` (`path = "thought-store.db"`), `[ollama]`, `[mcp]`, `[mdns]`.
