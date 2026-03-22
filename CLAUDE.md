@@ -112,7 +112,9 @@ Architectural inversion under exploration: thoughts become plain text files (mar
 - **Prior art**: Org-roam (files + SQLite cache), Denote (files only, no DB, metadata in filename)
 - **DB as cache**: embeddings, parsed metadata, asset manifests, FTS5. Disposable — rebuild from files + Ollama re-embed
 
-**Open questions**: file format, identity scheme, atomic operations across files+Git, cache rebuild contract, encryption at rest, SSH key management / auth between nodes. See design doc for full analysis.
+**File format decision**: Org mode — native tags, property drawers, timestamps, TODO states. Parser: `niklasfasching/go-org` (pure Go, start here). Extensible parser interface dispatches by file extension (`.org`, `.md`, etc.). Future options: `odvcencio/gotreesitter` (pure Go tree-sitter runtime, no CGO) or Emacs batch mode for canonical correctness.
+
+**Open questions**: identity scheme, atomic operations across files+Git, cache rebuild contract, encryption at rest, SSH key management / auth between nodes, property drawer vs tags for people metadata. See design doc for full analysis.
 
 ### Security (needs research)
 

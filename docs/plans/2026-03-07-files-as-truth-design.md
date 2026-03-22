@@ -179,8 +179,53 @@ For P2P sync to work, each node needs:
 
 ## Open Questions
 
-### File format
-Markdown + YAML front matter? Org mode? Something custom? Determines parsing, metadata extraction, editor support.
+### File format — Org mode (decided), with extensible parser architecture
+
+**Decision: Org mode is the primary format.** Motivated by:
+
+- Org has native, coherent syntax for all the metadata we need: tags (`:tag1:tag2:`), properties drawer (`:PROPERTIES:`), timestamps (`[2026-03-08]`, `SCHEDULED:`, `DEADLINE:`), TODO states, links (`[[id:...]]`), hierarchy. Markdown + YAML front matter is an amalgam — the "structured metadata" part (YAML) is bolted onto a format that wasn't designed for it, and every tool interprets the YAML differently.
+- Tags become **bidirectional**: the brain writes tags into the org file, the indexer reads them back. No separate metadata API needed — the file IS the API.
+- Org's property drawer maps directly to the existing `MetadataType` enum: `person` → `:PEOPLE:` property or `:@sarah:` tag, `date` → org timestamps, `tag` → headline tags, `actionItem` → TODO states.
+- Aligns with Denote (files-only, org-native) and Org-roam (files + SQLite cache) prior art.
+
+**Parsing strategy — parser per file extension:**
+
+The indexer selects a parser based on file extension. Org is primary; other formats supported via the same interface.
+
+| Extension | Parser | Library | Notes |
+|---|---|---|---|
+| `.org` | Org parser | `niklasfasching/go-org` (start here) | Pure Go, used by Hugo, handles headings/tags/properties/timestamps/links. Covers ~90% of org syntax. |
+| `.md` | Markdown parser | TBD (goldmark, etc.) | Future. YAML front matter for metadata. |
+| other | Skip or plain text | — | Future extensibility |
+
+**Go Org parsing options explored (2026-03-21):**
+
+1. **`niklasfasching/go-org`** (chosen starting point) — Pure Go, no CGO, mature (used by Hugo). Parses headings, tags, property drawers, timestamps, links. Sub-millisecond per file. Handles the common cases well. Fits single-binary philosophy.
+
+2. **`odvcencio/gotreesitter` + `nvim-orgmode/tree-sitter-org`** (future option) — Pure Go reimplementation of the entire tree-sitter runtime (same philosophy as `modernc.org/sqlite`). No CGO. 206 grammars shipped. ~2.4x slower than C tree-sitter on full parse (irrelevant for single-file indexing). Incremental reparsing is actually faster than C. Risk: gotreesitter is new (~Feb 2026, 410 stars). The `tree-sitter-org` grammar handles headings, tags, property drawers, timestamps, TODO states, but inline markup is coarse. **Interesting future path** — one parser infrastructure for multiple formats.
+
+3. **Emacs batch mode** (canonical correctness) — `emacs -Q --batch -l extract.el --eval '(extract-metadata "file.org")'`. Uses `org-element-parse-buffer`, the canonical 100%-correct parser. ~0.3-0.5s per invocation (Emacs startup overhead). Can run as daemon (`emacs --daemon` + `emacsclient`) for near-zero per-call latency. Breaks single-binary (requires Emacs installed). Useful as a **correctness oracle** or fallback for edge cases. Elisp could be embedded in `~/.config/emacs/` and invoked by the Go binary.
+
+**Parser interface sketch:**
+```go
+type ThoughtParser interface {
+    Parse(path string) (*ParsedThought, error)
+}
+
+type ParsedThought struct {
+    Title      string
+    Content    string
+    Tags       []string
+    Properties map[string]string  // from :PROPERTIES: drawer or YAML front matter
+    TODOState  string
+    Timestamps []ParsedTimestamp
+    Links      []ParsedLink
+}
+```
+
+The indexer calls `parser.Parse(path)` and gets a uniform result regardless of file format. The SQLite cache stores the parsed metadata. When the file changes (fsnotify), re-parse and update the cache.
+
+**Markdown's role:** Markdown is supported as a secondary format for portability — if someone shares a markdown thought or a web clipping arrives as `.md`, the indexer handles it. But Org is the native, first-class format for authoring and metadata.
 
 ### Identity
 Denote uses timestamps, Org-roam uses UUIDs. Current thought-store uses UUIDs. What's the canonical identifier in the files-as-truth world? Needs to be filename-safe across platforms.
